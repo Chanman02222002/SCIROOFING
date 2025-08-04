@@ -1,4 +1,0 @@
-Flask
-gunicorn
-faker
-jinja2
