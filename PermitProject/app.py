@@ -170,6 +170,14 @@ app.jinja_loader = DictLoader({
                   #f7f8fb;
             }
 
+            body.landing-page {
+                background:
+                  radial-gradient(1200px 700px at 10% 10%, #eaf6ff 0%, transparent 45%),
+                  radial-gradient(900px 600px at 90% 20%, #fff0eb 0%, transparent 40%),
+                  radial-gradient(900px 700px at 70% 85%, #eef9f1 0%, transparent 40%),
+                  #f7f8fb;
+            }
+
             .auth-wrapper{
                 min-height: calc(100vh - 70px);
                 display:flex;
@@ -213,6 +221,54 @@ app.jinja_loader = DictLoader({
             }
 
             .note-card { background:#fff; border:1px solid #e9ecef; border-radius:8px; padding:.5rem .75rem; }
+
+            /* Landing page styles */
+            .hero-card {
+                background: rgba(255,255,255,.9);
+                border-radius: 24px;
+                border: 1px solid rgba(0,0,0,.05);
+                box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+                padding: 3rem;
+            }
+            .hero-eyebrow {
+                font-size: .85rem;
+                text-transform: uppercase;
+                letter-spacing: .14em;
+                color: #6c757d;
+                font-weight: 600;
+            }
+            .hero-title {
+                font-size: clamp(2.2rem, 4vw, 3.2rem);
+                font-weight: 700;
+                color: #0f172a;
+            }
+            .hero-lead {
+                font-size: 1.1rem;
+                color: #475569;
+            }
+            .pill-card {
+                background: #fff;
+                border-radius: 16px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: 1.25rem;
+                box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+                height: 100%;
+            }
+            .pill-card h6 {
+                font-weight: 700;
+                margin-bottom: .5rem;
+            }
+            .brand-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: .5rem;
+                padding: .35rem .8rem;
+                border-radius: 999px;
+                background: rgba(13,110,253,.08);
+                color: #0d6efd;
+                font-weight: 600;
+                font-size: .9rem;
+            }
         </style>
     </head>
     <body class="{{ body_class or '' }}">
@@ -281,6 +337,89 @@ app.jinja_loader = DictLoader({
           </form>
         </div>
       </div>
+    {% endblock %}
+    """,
+
+    # ---------- LANDING ----------
+    "landing.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <section class="py-4">
+        <div class="hero-card">
+          <div class="row g-4 align-items-center">
+            <div class="col-lg-6">
+              <div class="brand-badge mb-3">Florida Sales Leads</div>
+              <h1 class="hero-title mb-3">High-intent leads, modern sales systems, and automation that scales.</h1>
+              <p class="hero-lead mb-4">
+                I work with all types of industries to deliver targeted sales leads, build streamlined sales systems,
+                and remove tedious manual work with smart automation. Whether you need internal tools, client-facing
+                portals, or full websites like Jobs Direct-style web servers, I can help you ship faster and sell smarter.
+              </p>
+              <div class="d-flex flex-wrap gap-3">
+                <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}">Client Login</a>
+                <a class="btn btn-outline-secondary btn-lg" href="mailto:hello@floridasalesleads.com">Book a Consultation</a>
+              </div>
+            </div>
+            <div class="col-lg-6 text-center">
+              <img src="{{ url_for('static', filename='floridasalesleadslogo.webp') }}"
+                   class="brand-logo mb-3"
+                   alt="Florida Sales Leads logo"
+                   loading="lazy"
+                   style="max-height: 180px;">
+              <p class="text-muted mb-0">
+                Trusted by service businesses, contractors, home services, healthcare, legal, and more.
+                We keep the focus on outcomes — no inside secrets, just proven execution.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="py-4">
+        <div class="row g-4">
+          <div class="col-md-4">
+            <div class="pill-card">
+              <h6>Targeted Lead Delivery</h6>
+              <p class="mb-0 text-muted">
+                Curated lists built for your ICP, with clear next steps to move prospects into your pipeline.
+              </p>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="pill-card">
+              <h6>Sales Systems & Automation</h6>
+              <p class="mb-0 text-muted">
+                Automate outreach, follow-up, and reporting so your team can focus on closing deals.
+              </p>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="pill-card">
+              <h6>Tools, Portals & Web Apps</h6>
+              <p class="mb-0 text-muted">
+                Internal dashboards, client portals, and full websites that support how you sell and serve.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="py-4">
+        <div class="pill-card">
+          <div class="row g-3 align-items-center">
+            <div class="col-lg-8">
+              <h5 class="mb-2">Let’s talk fit and timing.</h5>
+              <p class="text-muted mb-0">
+                We can schedule a consultation to review your goals, current sales flow, and the quickest win.
+                I collaborate with a range of clients — from startups to established operators — and tailor each plan to your team.
+              </p>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+              <a class="btn btn-primary" href="mailto:hello@floridasalesleads.com">Schedule a Consultation</a>
+            </div>
+          </div>
+        </div>
+      </section>
     {% endblock %}
     """,
 
@@ -651,7 +790,7 @@ def filter_properties_from_request(source_properties=None):
 def home():
     if session.get("username"):
         return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
+    return render_template("landing.html", title="Florida Sales Leads", body_class="landing-page")
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -857,4 +996,5 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
