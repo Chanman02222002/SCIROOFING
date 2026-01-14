@@ -406,7 +406,9 @@ app.jinja_loader = DictLoader({
               <h1 class="hero-title mb-3">Sleek lead generation and automation built for modern growth teams.</h1>
               <p class="hero-lead mb-4">
                 We deliver high-intent prospects, optimize your sales workflow, and automate follow-up so your team
-                can spend more time closing. Think targeted data, clean handoffs, and systems that scale.
+                can spend more time closing. We also build AI integrations that solve real revenue problems—like
+                targeted email sequences, smart segmentation, and next-best-action prompts—using cutting-edge tools.
+                Think targeted data, clean handoffs, and systems that scale, powered by AI.
               </p>
               <div class="hero-cta d-flex flex-wrap gap-3 mb-4">
                 <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}">Client Login</a>
@@ -453,17 +455,20 @@ app.jinja_loader = DictLoader({
           <div class="col-md-4">
             <div class="feature-card">
               <h5>Precision Lead Delivery</h5>
-              <p class="text-muted mb-0">
+                <p class="text-muted mb-0">
                 Hyper-targeted lists aligned to your ICP, enriched with decision-maker context and next-step guidance.
-              </p>
+                Our Florida leads are powerful because they include direct contact information for the people you
+                want to reach across the state.
+                </p>
             </div>
           </div>
           <div class="col-md-4">
             <div class="feature-card">
               <h5>Sales Systems & Automation</h5>
-              <p class="text-muted mb-0">
-                Automated outreach, follow-ups, and reporting pipelines that keep every lead warm and visible.
-              </p>
+                <p class="text-muted mb-0">
+                Automated outreach, follow-ups, and reporting pipelines that keep every lead warm and visible, with
+                AI-driven targeted emails and personalization that keeps replies high.
+                </p>
             </div>
           </div>
           <div class="col-md-4">
@@ -1068,6 +1073,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
