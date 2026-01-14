@@ -410,7 +410,7 @@ app.jinja_loader = DictLoader({
               </p>
               <div class="hero-cta d-flex flex-wrap gap-3 mb-4">
                 <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}">Client Login</a>
-                <a class="btn btn-outline-secondary btn-lg" href="mailto:hello@floridasalesleads.com">Book a Consultation</a>
+                <a class="btn btn-outline-secondary btn-lg" href="mailto:chandler@floridasalesleads.com">Book a Consultation</a>
               </div>
               <div class="metrics-grid">
                 <div class="metric-card">
@@ -1068,6 +1068,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
