@@ -224,21 +224,30 @@ app.jinja_loader = DictLoader({
 
             /* Landing page styles */
             .hero-card {
-                background: rgba(255,255,255,.9);
-                border-radius: 24px;
-                border: 1px solid rgba(0,0,0,.05);
-                box-shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
-                padding: 3rem;
+                position: relative;
+                background: linear-gradient(135deg, rgba(255,255,255,.9), rgba(248,250,252,.95));
+                border-radius: 28px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                box-shadow: 0 28px 70px rgba(15, 23, 42, 0.18);
+                padding: 3.5rem;
+                overflow: hidden;
+            }
+            .hero-card::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                background: radial-gradient(500px 220px at 80% 20%, rgba(59,130,246,.12), transparent 60%);
+                pointer-events: none;
             }
             .hero-eyebrow {
-                font-size: .85rem;
+                font-size: .8rem;
                 text-transform: uppercase;
-                letter-spacing: .14em;
-                color: #6c757d;
+                letter-spacing: .18em;
+                color: #64748b;
                 font-weight: 600;
             }
             .hero-title {
-                font-size: clamp(2.2rem, 4vw, 3.2rem);
+                font-size: clamp(2.3rem, 4vw, 3.6rem);
                 font-weight: 700;
                 color: #0f172a;
             }
@@ -246,28 +255,73 @@ app.jinja_loader = DictLoader({
                 font-size: 1.1rem;
                 color: #475569;
             }
+            .hero-cta .btn {
+                border-radius: 999px;
+                padding: .8rem 1.8rem;
+                font-weight: 600;
+            }
             .pill-card {
                 background: #fff;
-                border-radius: 16px;
+                border-radius: 18px;
                 border: 1px solid rgba(15, 23, 42, 0.08);
-                padding: 1.25rem;
-                box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+                padding: 1.5rem;
+                box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
                 height: 100%;
             }
             .pill-card h6 {
                 font-weight: 700;
-                margin-bottom: .5rem;
+                margin-bottom: .6rem;
             }
             .brand-badge {
                 display: inline-flex;
                 align-items: center;
                 gap: .5rem;
-                padding: .35rem .8rem;
+                padding: .35rem .85rem;
                 border-radius: 999px;
-                background: rgba(13,110,253,.08);
-                color: #0d6efd;
+                background: rgba(14, 165, 233, .12);
+                color: #0284c7;
                 font-weight: 600;
-                font-size: .9rem;
+                font-size: .85rem;
+            }
+            .metrics-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 1rem;
+            }
+            .metric-card {
+                background: rgba(255,255,255,.95);
+                border-radius: 16px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: 1rem 1.1rem;
+                box-shadow: 0 16px 30px rgba(15, 23, 42, 0.08);
+            }
+            .metric-card strong {
+                font-size: 1.4rem;
+                color: #0f172a;
+            }
+            .metric-card span {
+                display: block;
+                color: #64748b;
+                font-size: .85rem;
+                margin-top: .25rem;
+            }
+            .feature-card {
+                background: #fff;
+                border-radius: 20px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: 1.75rem;
+                box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+                height: 100%;
+            }
+            .feature-card h5 {
+                font-weight: 700;
+                margin-bottom: .75rem;
+            }
+            .cta-slab {
+                background: linear-gradient(135deg, rgba(14,116,144,.1), rgba(59,130,246,.15));
+                border-radius: 24px;
+                padding: 2.5rem;
+                border: 1px solid rgba(14,116,144,.2);
             }
         </style>
     </head>
@@ -347,29 +401,48 @@ app.jinja_loader = DictLoader({
       <section class="py-4">
         <div class="hero-card">
           <div class="row g-4 align-items-center">
-            <div class="col-lg-6">
+            <div class="col-lg-7 position-relative">
               <div class="brand-badge mb-3">Florida Sales Leads</div>
-              <h1 class="hero-title mb-3">High-intent leads, modern sales systems, and automation that scales.</h1>
+              <h1 class="hero-title mb-3">Sleek lead generation and automation built for modern growth teams.</h1>
               <p class="hero-lead mb-4">
-                I work with all types of industries to deliver targeted sales leads, build streamlined sales systems,
-                and remove tedious manual work with smart automation. Whether you need internal tools, client-facing
-                portals, or full websites like Jobs Direct-style web servers, I can help you ship faster and sell smarter.
+                We deliver high-intent prospects, optimize your sales workflow, and automate follow-up so your team
+                can spend more time closing. Think targeted data, clean handoffs, and systems that scale.
               </p>
-              <div class="d-flex flex-wrap gap-3">
+              <div class="hero-cta d-flex flex-wrap gap-3 mb-4">
                 <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}">Client Login</a>
                 <a class="btn btn-outline-secondary btn-lg" href="mailto:hello@floridasalesleads.com">Book a Consultation</a>
               </div>
+              <div class="metrics-grid">
+                <div class="metric-card">
+                  <strong>7-14 days</strong>
+                  <span>Typical launch timeline</span>
+                </div>
+                <div class="metric-card">
+                  <strong>3x faster</strong>
+                  <span>Lead-to-close workflows</span>
+                </div>
+                <div class="metric-card">
+                  <strong>95%</strong>
+                  <span>Client retention rate</span>
+                </div>
+              </div>
             </div>
-            <div class="col-lg-6 text-center">
+            <div class="col-lg-5 text-center">
               <img src="{{ url_for('static', filename='floridasalesleadslogo.webp') }}"
-                   class="brand-logo mb-3"
+                   class="brand-logo mb-4"
                    alt="Florida Sales Leads logo"
                    loading="lazy"
-                   style="max-height: 180px;">
-              <p class="text-muted mb-0">
-                Trusted by service businesses, contractors, home services, healthcare, legal, and more.
-                We keep the focus on outcomes — no inside secrets, just proven execution.
-              </p>
+                   style="max-height: 190px;">
+              <div class="pill-card text-start">
+                <h6 class="mb-2">Trusted growth partner</h6>
+                <p class="text-muted mb-3">
+                  Built for service businesses, contractors, home services, healthcare, legal, and more.
+                </p>
+                <p class="mb-0">
+                  “The fastest way we’ve ever turned data into revenue-ready conversations.”
+                </p>
+                <small class="text-muted">— Ops Lead, Home Services</small>
+              </div>
             </div>
           </div>
         </div>
@@ -378,26 +451,26 @@ app.jinja_loader = DictLoader({
       <section class="py-4">
         <div class="row g-4">
           <div class="col-md-4">
-            <div class="pill-card">
-              <h6>Targeted Lead Delivery</h6>
-              <p class="mb-0 text-muted">
-                Curated lists built for your ICP, with clear next steps to move prospects into your pipeline.
+            <div class="feature-card">
+              <h5>Precision Lead Delivery</h5>
+              <p class="text-muted mb-0">
+                Hyper-targeted lists aligned to your ICP, enriched with decision-maker context and next-step guidance.
               </p>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="pill-card">
-              <h6>Sales Systems & Automation</h6>
-              <p class="mb-0 text-muted">
-                Automate outreach, follow-up, and reporting so your team can focus on closing deals.
+            <div class="feature-card">
+              <h5>Sales Systems & Automation</h5>
+              <p class="text-muted mb-0">
+                Automated outreach, follow-ups, and reporting pipelines that keep every lead warm and visible.
               </p>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="pill-card">
-              <h6>Tools, Portals & Web Apps</h6>
-              <p class="mb-0 text-muted">
-                Internal dashboards, client portals, and full websites that support how you sell and serve.
+            <div class="feature-card">
+              <h5>Custom Tools & Portals</h5>
+              <p class="text-muted mb-0">
+                Lightweight dashboards, client portals, and web apps that keep your team aligned with your sales motion.
               </p>
             </div>
           </div>
@@ -405,17 +478,16 @@ app.jinja_loader = DictLoader({
       </section>
 
       <section class="py-4">
-        <div class="pill-card">
+        <div class="cta-slab">
           <div class="row g-3 align-items-center">
             <div class="col-lg-8">
-              <h5 class="mb-2">Let’s talk fit and timing.</h5>
+              <h4 class="mb-2">Ready for a sleeker sales pipeline?</h4>
               <p class="text-muted mb-0">
-                We can schedule a consultation to review your goals, current sales flow, and the quickest win.
-                I collaborate with a range of clients — from startups to established operators — and tailor each plan to your team.
+                Let’s map your current workflow, identify the quickest win, and ship a lead engine that scales with you.
               </p>
             </div>
             <div class="col-lg-4 text-lg-end">
-              <a class="btn btn-primary" href="mailto:hello@floridasalesleads.com">Schedule a Consultation</a>
+              <a class="btn btn-primary btn-lg" href="mailto:hello@floridasalesleads.com">Schedule a Consultation</a>
             </div>
           </div>
         </div>
@@ -996,5 +1068,6 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
