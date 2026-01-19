@@ -751,20 +751,6 @@ app.jinja_loader = DictLoader({
                 <h2>Roof Estimator Tool</h2>
                 <p>Generate a polished pricing range in under two minutes, with smart adjustments for pitch, access, and material.</p>
               </div>
-              <div class="estimator-kpis">
-                <div class="estimator-kpi">
-                  <strong>2 min</strong>
-                  Average turnaround
-                </div>
-                <div class="estimator-kpi">
-                  <strong>92%</strong>
-                  Quote readiness
-                </div>
-                <div class="estimator-kpi">
-                  <strong>Live</strong>
-                  Market factors
-                </div>
-              </div>
             </div>
           </div>
           <div class="row g-4">
@@ -1535,6 +1521,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
