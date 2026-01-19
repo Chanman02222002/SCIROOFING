@@ -328,7 +328,7 @@ app.jinja_loader = DictLoader({
     <body class="{{ body_class or '' }}">
         <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
           <div class="container-fluid">
-            <a class="navbar-brand" href="{{ url_for('dashboard') }}">Florida Sales Leads</a>
+            <a class="navbar-brand" href="{% if session.get('brand') == 'sci' %}{{ url_for('sci_landing') }}{% else %}{{ url_for('dashboard') }}{% endif %}">Florida Sales Leads</a>
             <div class="d-flex">
               {% if session.get('username') %}
                 <span class="navbar-text me-3">Hi, {{ session['username'] }}{% if session.get('role')=='admin' %} (Admin){% endif %}</span>
@@ -585,6 +585,40 @@ app.jinja_loader = DictLoader({
       <h2 class="mb-4">Permit Database</h2>
       {% include "search_form.html" %}
       {% include "table.html" %}
+    {% endblock %}
+    """,
+
+    # ---------- SCI LANDING ----------
+    "sci_landing.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <img src="{{ url_for('static', filename='SCILOGO.png') }}" alt="SCI Roofing Logo" class="mb-3" style="max-height:70px;">
+      <h2 class="mb-2">SCI Dashboard</h2>
+      <p class="text-muted mb-4">Choose a function to continue.</p>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+              <h5 class="card-title">Roofing Leads</h5>
+              <p class="card-text text-muted flex-grow-1">
+                Access the SCI permit database and explore active roofing opportunities.
+              </p>
+              <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Open Roofing Leads</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+              <h5 class="card-title">Roof Estimator Tool</h5>
+              <p class="card-text text-muted flex-grow-1">
+                A quick estimate workflow for upcoming projects (coming soon).
+              </p>
+              <button class="btn btn-outline-secondary" type="button" disabled>Coming Soon</button>
+            </div>
+          </div>
+        </div>
+      </div>
     {% endblock %}
     """,
 
@@ -866,6 +900,8 @@ def filter_properties_from_request(source_properties=None):
 @app.route("/")
 def home():
     if session.get("username"):
+        if session.get("brand") == "sci":
+            return redirect(url_for("sci_landing"))
         return redirect(url_for("dashboard"))
     return render_template("landing.html", title="Florida Sales Leads", body_class="landing-page")
 
@@ -880,6 +916,8 @@ def login():
             session["role"] = info["role"]
             session["brand"] = info["brand"]
             flash("Logged in successfully.")
+            if info["brand"] == "sci":
+                return redirect(url_for("sci_landing"))
             return redirect(url_for("dashboard"))
         flash("Invalid username or password.")
     # Give login page a special body class so only it uses the gradient & bigger logo
@@ -890,6 +928,14 @@ def logout():
     session.clear()
     flash("Logged out.")
     return redirect(url_for("login"))
+
+@app.route("/sci")
+def sci_landing():
+    if not require_login():
+        return redirect(url_for("login"))
+    if current_brand() != "sci":
+        return redirect(url_for("dashboard"))
+    return render_template("sci_landing.html", title="SCI Dashboard")
 
 @app.route("/dashboard")
 def dashboard():
@@ -1073,6 +1119,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
