@@ -172,11 +172,18 @@ app.jinja_loader = DictLoader({
                   #f7f8fb;
             }
 
-            body.landing-page {
+           body.landing-page {
                 background:
                   radial-gradient(1200px 700px at 10% 10%, #eaf6ff 0%, transparent 45%),
                   radial-gradient(900px 600px at 90% 20%, #fff0eb 0%, transparent 40%),
                   radial-gradient(900px 700px at 70% 85%, #eef9f1 0%, transparent 40%),
+                  #f7f8fb;
+            }
+            body.estimator-page {
+                background:
+                  radial-gradient(900px 500px at 10% 20%, rgba(56, 189, 248, .18), transparent 55%),
+                  radial-gradient(1000px 650px at 90% 10%, rgba(244, 114, 182, .18), transparent 55%),
+                  radial-gradient(900px 700px at 80% 80%, rgba(34, 197, 94, .12), transparent 60%),
                   #f7f8fb;
             }
 
@@ -326,11 +333,20 @@ app.jinja_loader = DictLoader({
                 border: 1px solid rgba(14,116,144,.2);
             }
             .estimator-shell {
-                background: linear-gradient(135deg, rgba(15,23,42,.02), rgba(148,163,184,.12));
+                background: linear-gradient(145deg, rgba(255,255,255,.95), rgba(248,250,252,.9));
                 border-radius: 28px;
-                border: 1px solid rgba(15, 23, 42, 0.08);
+                border: 1px solid rgba(15, 23, 42, 0.06);
                 padding: 2.5rem;
-                box-shadow: 0 30px 70px rgba(15, 23, 42, 0.12);
+                box-shadow: 0 35px 80px rgba(15, 23, 42, 0.12);
+                position: relative;
+                overflow: hidden;
+            }
+            .estimator-shell::after {
+                content: "";
+                position: absolute;
+                inset: -40% 30% 40% -10%;
+                background: radial-gradient(360px 220px at 20% 20%, rgba(59, 130, 246, .16), transparent 70%);
+                pointer-events: none;
             }
             .estimator-panel {
                 background: #fff;
@@ -338,6 +354,8 @@ app.jinja_loader = DictLoader({
                 border: 1px solid rgba(15, 23, 42, 0.08);
                 padding: 1.75rem;
                 box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+                position: relative;
+                z-index: 1;
             }
             .estimate-badge {
                 display: inline-flex;
@@ -349,6 +367,64 @@ app.jinja_loader = DictLoader({
                 color: #1d4ed8;
                 font-weight: 600;
                 font-size: .85rem;
+            }
+            .estimator-header {
+                background: linear-gradient(135deg, rgba(30, 64, 175, .92), rgba(59, 130, 246, .92));
+                color: #fff;
+                border-radius: 20px;
+                padding: 1.75rem 2rem;
+                box-shadow: 0 24px 40px rgba(30, 64, 175, 0.25);
+                margin-bottom: 1.75rem;
+            }
+            .estimator-header h2 {
+                font-weight: 700;
+                margin-bottom: .35rem;
+            }
+            .estimator-header p {
+                margin-bottom: 0;
+                color: rgba(255,255,255,.85);
+            }
+            .estimator-steps {
+                display: grid;
+                gap: .85rem;
+            }
+            .estimator-step {
+                display: flex;
+                align-items: center;
+                gap: .75rem;
+                background: rgba(15, 23, 42, .04);
+                border-radius: 12px;
+                padding: .6rem .8rem;
+                font-size: .9rem;
+                color: #1f2937;
+            }
+            .step-index {
+                width: 28px;
+                height: 28px;
+                border-radius: 50%;
+                background: rgba(59, 130, 246, .15);
+                color: #1d4ed8;
+                display: grid;
+                place-items: center;
+                font-weight: 700;
+            }
+            .estimator-kpis {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: .9rem;
+            }
+            .estimator-kpi {
+                background: rgba(255,255,255,.9);
+                border-radius: 14px;
+                border: 1px solid rgba(15,23,42,.08);
+                padding: .9rem 1rem;
+                box-shadow: 0 12px 24px rgba(15,23,42,.08);
+                font-size: .9rem;
+            }
+            .estimator-kpi strong {
+                display: block;
+                font-size: 1.2rem;
+                color: #0f172a;
             }
             .estimate-result {
                 background: linear-gradient(135deg, rgba(14,116,144,.08), rgba(59,130,246,.08));
@@ -668,15 +744,45 @@ app.jinja_loader = DictLoader({
     {% block content %}
       <section class="py-4">
         <div class="estimator-shell">
+          <div class="estimator-header">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+              <div>
+                <div class="estimate-badge mb-2">AI-Guided Estimator</div>
+                <h2>Roof Estimator Tool</h2>
+                <p>Generate a polished pricing range in under two minutes, with smart adjustments for pitch, access, and material.</p>
+              </div>
+              <div class="estimator-kpis">
+                <div class="estimator-kpi">
+                  <strong>2 min</strong>
+                  Average turnaround
+                </div>
+                <div class="estimator-kpi">
+                  <strong>92%</strong>
+                  Quote readiness
+                </div>
+                <div class="estimator-kpi">
+                  <strong>Live</strong>
+                  Market factors
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="row g-4">
             <div class="col-lg-5">
               <div class="estimator-panel h-100">
-                <div class="estimate-badge mb-3">Powered by GPT-4.1-mini</div>
-                <h2 class="mb-3">Roof Estimator Tool</h2>
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                  <div class="estimate-badge">Powered by GPT-4.1-mini</div>
+                  <span class="text-muted small">Version 2.0</span>
+                </div>
+                <h5 class="mb-2">Project Inputs</h5>
                 <p class="text-muted mb-4">
-                  Answer a few quick questions and get a tailored, AI-assisted price range.
-                  Every estimate includes material, pitch, and access considerations.
+                  Share a few details to unlock a modern estimate layout with scope highlights and pricing guidance.
                 </p>
+                <div class="estimator-steps mb-4">
+                  <div class="estimator-step"><span class="step-index">1</span>Define project type + material</div>
+                  <div class="estimator-step"><span class="step-index">2</span>Capture square footage + pitch</div>
+                  <div class="estimator-step"><span class="step-index">3</span>Confirm access + story height</div>
+                </div>
                 <form method="post" class="vstack gap-3">
                   <div>
                     <label class="form-label">Project Type</label>
@@ -726,7 +832,10 @@ app.jinja_loader = DictLoader({
             </div>
             <div class="col-lg-7">
               <div class="estimator-panel">
-                <h4 class="mb-3">Estimate Preview</h4>
+                <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
+                  <h4 class="mb-0">Estimate Preview</h4>
+                  <span class="text-muted small">Styled for client-ready delivery</span>
+                </div>
                 {% if estimate %}
                   <div class="estimate-result mb-4">
                     <div class="row g-3">
@@ -757,8 +866,16 @@ app.jinja_loader = DictLoader({
                     This estimate is informational and should be validated with a site inspection.
                   </div>
                 {% else %}
-                  <div class="text-muted">
+                  <div class="text-muted mb-4">
                     Provide the project details to see a tailored estimate summary here.
+                  </div>
+                  <div class="estimate-result">
+                    <h6 class="mb-2">What you will get</h6>
+                    <ul class="mb-0 text-muted">
+                      <li>Clear pricing range with material-driven adjustments.</li>
+                      <li>Scope highlights to support your proposal narrative.</li>
+                      <li>Confidence level to guide next steps.</li>
+                    </ul>
                   </div>
                 {% endif %}
               </div>
@@ -1229,8 +1346,13 @@ def roof_estimator():
             })
             form_data["square_footage"] = sqft
 
-    return render_template("estimator.html", title="Roof Estimator", form=form_data, estimate=estimate)
-
+    return render_template(
+        "estimator.html",
+        title="Roof Estimator",
+        form=form_data,
+        estimate=estimate,
+        body_class="estimator-page",
+    )
 @app.route("/dashboard")
 def dashboard():
     if not require_login():
@@ -1413,6 +1535,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
