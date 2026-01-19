@@ -8,13 +8,15 @@ from copy import deepcopy
 from faker import Faker
 from datetime import datetime
 from jinja2 import DictLoader
+import json
+import urllib.request
 import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
 
 fake = Faker("en_US")
-
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -323,6 +325,44 @@ app.jinja_loader = DictLoader({
                 padding: 2.5rem;
                 border: 1px solid rgba(14,116,144,.2);
             }
+            .estimator-shell {
+                background: linear-gradient(135deg, rgba(15,23,42,.02), rgba(148,163,184,.12));
+                border-radius: 28px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: 2.5rem;
+                box-shadow: 0 30px 70px rgba(15, 23, 42, 0.12);
+            }
+            .estimator-panel {
+                background: #fff;
+                border-radius: 18px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: 1.75rem;
+                box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+            }
+            .estimate-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: .5rem;
+                padding: .35rem .8rem;
+                border-radius: 999px;
+                background: rgba(59, 130, 246, .15);
+                color: #1d4ed8;
+                font-weight: 600;
+                font-size: .85rem;
+            }
+            .estimate-result {
+                background: linear-gradient(135deg, rgba(14,116,144,.08), rgba(59,130,246,.08));
+                border-radius: 16px;
+                padding: 1.5rem;
+                border: 1px solid rgba(59,130,246,.15);
+            }
+            .estimate-kpi {
+                background: #fff;
+                border-radius: 14px;
+                border: 1px solid rgba(15,23,42,.08);
+                padding: 1rem 1.2rem;
+                box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+            }
         </style>
     </head>
     <body class="{{ body_class or '' }}">
@@ -612,13 +652,120 @@ app.jinja_loader = DictLoader({
             <div class="card-body d-flex flex-column">
               <h5 class="card-title">Roof Estimator Tool</h5>
               <p class="card-text text-muted flex-grow-1">
-                A quick estimate workflow for upcoming projects (coming soon).
+                Generate fast estimates with AI-powered guidance.
               </p>
-              <button class="btn btn-outline-secondary" type="button" disabled>Coming Soon</button>
+              <a class="btn btn-outline-primary" href="{{ url_for('roof_estimator') }}">Launch Estimator</a>
             </div>
           </div>
         </div>
       </div>
+    {% endblock %}
+    """,
+
+    # ---------- ROOF ESTIMATOR ----------
+    "estimator.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <section class="py-4">
+        <div class="estimator-shell">
+          <div class="row g-4">
+            <div class="col-lg-5">
+              <div class="estimator-panel h-100">
+                <div class="estimate-badge mb-3">Powered by GPT-4.1-mini</div>
+                <h2 class="mb-3">Roof Estimator Tool</h2>
+                <p class="text-muted mb-4">
+                  Answer a few quick questions and get a tailored, AI-assisted price range.
+                  Every estimate includes material, pitch, and access considerations.
+                </p>
+                <form method="post" class="vstack gap-3">
+                  <div>
+                    <label class="form-label">Project Type</label>
+                    <select name="project_type" class="form-select" required>
+                      <option value="" disabled {% if not form.project_type %}selected{% endif %}>Select type</option>
+                      <option value="Residential" {% if form.project_type == 'Residential' %}selected{% endif %}>Residential</option>
+                      <option value="Commercial" {% if form.project_type == 'Commercial' %}selected{% endif %}>Commercial</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="form-label">Material Type</label>
+                    <select name="material_type" class="form-select" required>
+                      <option value="" disabled {% if not form.material_type %}selected{% endif %}>Select material</option>
+                      <option value="Shingle" {% if form.material_type == 'Shingle' %}selected{% endif %}>Shingle</option>
+                      <option value="Tile" {% if form.material_type == 'Tile' %}selected{% endif %}>Tile</option>
+                      <option value="Metal" {% if form.material_type == 'Metal' %}selected{% endif %}>Metal</option>
+                    </select>
+                  </div>
+                  <div class="row g-3">
+                    <div class="col-md-6">
+                      <label class="form-label">Square Footage</label>
+                      <input type="number" min="200" step="50" name="square_footage" class="form-control" placeholder="e.g. 2400" value="{{ form.square_footage or '' }}" required>
+                    </div>
+                    <div class="col-md-6">
+                      <label class="form-label">Roof Pitch</label>
+                      <select name="pitch" class="form-select" required>
+                        <option value="" disabled {% if not form.pitch %}selected{% endif %}>Select pitch</option>
+                        <option value="Low (0-4/12)" {% if form.pitch == 'Low (0-4/12)' %}selected{% endif %}>Low (0-4/12)</option>
+                        <option value="Moderate (5-8/12)" {% if form.pitch == 'Moderate (5-8/12)' %}selected{% endif %}>Moderate (5-8/12)</option>
+                        <option value="Steep (9+/12)" {% if form.pitch == 'Steep (9+/12)' %}selected{% endif %}>Steep (9+/12)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="form-label">Stories</label>
+                    <select name="stories" class="form-select" required>
+                      <option value="" disabled {% if not form.stories %}selected{% endif %}>Select stories</option>
+                      <option value="1" {% if form.stories == '1' %}selected{% endif %}>1 Story</option>
+                      <option value="2" {% if form.stories == '2' %}selected{% endif %}>2 Stories</option>
+                      <option value="3" {% if form.stories == '3' %}selected{% endif %}>3 Stories</option>
+                      <option value="4+" {% if form.stories == '4+' %}selected{% endif %}>4+ Stories</option>
+                    </select>
+                  </div>
+                  <button class="btn btn-primary btn-lg">Generate Estimate</button>
+                </form>
+              </div>
+            </div>
+            <div class="col-lg-7">
+              <div class="estimator-panel">
+                <h4 class="mb-3">Estimate Preview</h4>
+                {% if estimate %}
+                  <div class="estimate-result mb-4">
+                    <div class="row g-3">
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Estimated Range</div>
+                          <strong>{{ estimate.range }}</strong>
+                        </div>
+                      </div>
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Base Cost / Sq Ft</div>
+                          <strong>{{ estimate.rate }}</strong>
+                        </div>
+                      </div>
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Confidence</div>
+                          <strong>{{ estimate.confidence }}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mb-3">
+                    {{ estimate.summary | safe }}
+                  </div>
+                  <div class="text-muted small">
+                    This estimate is informational and should be validated with a site inspection.
+                  </div>
+                {% else %}
+                  <div class="text-muted">
+                    Provide the project details to see a tailored estimate summary here.
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     {% endblock %}
     """,
 
@@ -894,6 +1041,113 @@ def filter_properties_from_request(source_properties=None):
         "date_to": date_to,
     }
 
+def _estimate_base_rate(material_type: str):
+    rate_table = {
+        "shingle": (4.5, 7.5),
+        "tile": (8.5, 13.5),
+        "metal": (9.5, 15.5),
+    }
+    return rate_table.get(material_type.lower(), (6.0, 10.0))
+
+def _estimate_pitch_multiplier(pitch: str):
+    pitch_map = {
+        "low (0-4/12)": 1.0,
+        "moderate (5-8/12)": 1.15,
+        "steep (9+/12)": 1.3,
+    }
+    return pitch_map.get(pitch.lower(), 1.1)
+
+def _estimate_story_multiplier(stories: str):
+    stories_map = {
+        "1": 1.0,
+        "2": 1.08,
+        "3": 1.15,
+        "4+": 1.25,
+    }
+    return stories_map.get(stories, 1.1)
+
+def calculate_estimate_inputs(payload):
+    base_min, base_max = _estimate_base_rate(payload["material_type"])
+    pitch_mult = _estimate_pitch_multiplier(payload["pitch"])
+    story_mult = _estimate_story_multiplier(payload["stories"])
+    project_mult = 1.1 if payload["project_type"].lower() == "commercial" else 1.0
+    sqft = max(payload["square_footage"], 200)
+    min_total = sqft * base_min * pitch_mult * story_mult * project_mult
+    max_total = sqft * base_max * pitch_mult * story_mult * project_mult
+    return {
+        "base_rate": (base_min, base_max),
+        "pitch_multiplier": pitch_mult,
+        "story_multiplier": story_mult,
+        "project_multiplier": project_mult,
+        "min_total": round(min_total, 0),
+        "max_total": round(max_total, 0),
+    }
+
+def format_currency(value):
+    return f"${value:,.0f}"
+
+def generate_estimate(payload):
+    estimate_inputs = calculate_estimate_inputs(payload)
+    base_min, base_max = estimate_inputs["base_rate"]
+    base_rate_label = f"${base_min:.2f} - ${base_max:.2f}"
+    range_label = f"{format_currency(estimate_inputs['min_total'])} - {format_currency(estimate_inputs['max_total'])}"
+    summary_html = (
+        f"<p><strong>Scope:</strong> {payload['project_type']} {payload['material_type']} roof, "
+        f"{payload['square_footage']:,} sq ft, {payload['pitch']}, {payload['stories']} stories.</p>"
+        "<ul>"
+        f"<li>Base material rate: {base_rate_label} per sq ft.</li>"
+        f"<li>Pitch factor: {estimate_inputs['pitch_multiplier']:.2f}.</li>"
+        f"<li>Access factor: {estimate_inputs['story_multiplier']:.2f}.</li>"
+        f"<li>Project type factor: {estimate_inputs['project_multiplier']:.2f}.</li>"
+        "</ul>"
+    )
+
+    if OPENAI_API_KEY:
+        prompt = (
+            "You are an expert roofing estimator. Provide a concise estimate summary with a price range, "
+            "key cost drivers, and 2-3 bullet points of assumptions. Use a friendly, professional tone. "
+            "Avoid legal advice. Keep the answer under 140 words."
+        )
+        user_payload = (
+            f"Project type: {payload['project_type']}\n"
+            f"Material: {payload['material_type']}\n"
+            f"Square footage: {payload['square_footage']}\n"
+            f"Pitch: {payload['pitch']}\n"
+            f"Stories: {payload['stories']}\n"
+            f"Base rate range per sq ft: {base_rate_label}\n"
+            f"Calculated estimate range: {range_label}\n"
+        )
+        try:
+            request_body = json.dumps({
+                "model": "gpt-4.1-mini",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_payload},
+                ],
+                "temperature": 0.4,
+            }).encode("utf-8")
+            request_obj = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=request_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request_obj, timeout=20) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+            ai_text = response_data["choices"][0]["message"]["content"].strip()
+            summary_html = f"<p>{ai_text.replace(chr(10), '<br>')}</p>"
+        except Exception as exc:
+            print(f"⚠️ OpenAI estimate failed: {exc}")
+
+    return {
+        "range": range_label,
+        "rate": f"{base_rate_label}/sq ft",
+        "confidence": "Medium",
+        "summary": summary_html,
+    }
 # ==========================================================
 # ROUTES
 # ==========================================================
@@ -936,6 +1190,46 @@ def sci_landing():
     if current_brand() != "sci":
         return redirect(url_for("dashboard"))
     return render_template("sci_landing.html", title="SCI Dashboard")
+
+@app.route("/estimator", methods=["GET", "POST"])
+def roof_estimator():
+    if not require_login():
+        return redirect(url_for("login"))
+
+    form_data = {
+        "project_type": "",
+        "material_type": "",
+        "square_footage": "",
+        "pitch": "",
+        "stories": "",
+    }
+    estimate = None
+
+    if request.method == "POST":
+        form_data = {
+            "project_type": request.form.get("project_type", "").strip(),
+            "material_type": request.form.get("material_type", "").strip(),
+            "square_footage": request.form.get("square_footage", "").strip(),
+            "pitch": request.form.get("pitch", "").strip(),
+            "stories": request.form.get("stories", "").strip(),
+        }
+        try:
+            sqft = int(form_data["square_footage"])
+        except ValueError:
+            sqft = 0
+        if not all([form_data["project_type"], form_data["material_type"], form_data["pitch"], form_data["stories"]]) or sqft <= 0:
+            flash("Please complete all fields with valid values.")
+        else:
+            estimate = generate_estimate({
+                "project_type": form_data["project_type"],
+                "material_type": form_data["material_type"],
+                "square_footage": sqft,
+                "pitch": form_data["pitch"],
+                "stories": form_data["stories"],
+            })
+            form_data["square_footage"] = sqft
+
+    return render_template("estimator.html", title="Roof Estimator", form=form_data, estimate=estimate)
 
 @app.route("/dashboard")
 def dashboard():
@@ -1119,6 +1413,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
