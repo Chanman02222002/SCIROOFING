@@ -468,6 +468,7 @@ app.jinja_loader = DictLoader({
           {% endwith %}
           {% block content %}{% endblock %}
         </div>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
         <script>
           // placeholder for small page scripts (e.g., toggles)
         </script>
@@ -698,9 +699,71 @@ app.jinja_loader = DictLoader({
     {% extends "base.html" %}
     {% block content %}
       <img src="{{ url_for('static', filename='SCILOGO.png') }}" alt="SCI Roofing Logo" class="mb-2" style="max-height:60px;">
-      <h2 class="mb-4">Permit Database</h2>
-      {% include "search_form.html" %}
-      {% include "table.html" %}
+      <h2 class="mb-3">SCI Dashboard</h2>
+      <ul class="nav nav-tabs mb-4" id="sciTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="permit-tab" data-bs-toggle="tab" data-bs-target="#permit-pane" type="button" role="tab" aria-controls="permit-pane" aria-selected="true">
+            Permit Database
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="project-map-tab" data-bs-toggle="tab" data-bs-target="#project-map-pane" type="button" role="tab" aria-controls="project-map-pane" aria-selected="false">
+            Project Map
+          </button>
+        </li>
+      </ul>
+      <div class="tab-content" id="sciTabContent">
+        <div class="tab-pane fade show active" id="permit-pane" role="tabpanel" aria-labelledby="permit-tab">
+          {% include "search_form.html" %}
+          {% include "table.html" %}
+        </div>
+        <div class="tab-pane fade" id="project-map-pane" role="tabpanel" aria-labelledby="project-map-tab">
+          <div class="card border-0 shadow-sm">
+            <div class="card-body">
+              <div id="project-map-locked" class="text-center py-5">
+                <h5 class="mb-2">Project Map Locked</h5>
+                <p class="text-muted mb-0">Select the Project Map tab to enter the password and view completed roofs.</p>
+              </div>
+              <div id="project-map-content" class="d-none">
+                <h5 class="mb-3">Project Map</h5>
+                <div class="border rounded-3 bg-light d-flex align-items-center justify-content-center" style="min-height:320px;">
+                  <div class="text-center">
+                    <p class="mb-2 fw-semibold">Map placeholder</p>
+                    <p class="text-muted mb-0">Residential and commercial roof projects will appear here.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (() => {
+          const projectTab = document.getElementById("project-map-tab");
+          const lockedState = document.getElementById("project-map-locked");
+          const mapContent = document.getElementById("project-map-content");
+          let unlocked = false;
+
+          if (projectTab) {
+            projectTab.addEventListener("show.bs.tab", (event) => {
+              if (unlocked) {
+                return;
+              }
+              event.preventDefault();
+              const password = window.prompt("Enter the Project Map password:");
+              if (password === "4321") {
+                unlocked = true;
+                lockedState?.classList.add("d-none");
+                mapContent?.classList.remove("d-none");
+                const tab = new bootstrap.Tab(projectTab);
+                tab.show();
+              } else if (password !== null) {
+                window.alert("Incorrect password. Please try again.");
+              }
+            });
+          }
+        })();
+      </script>
     {% endblock %}
     """,
 
@@ -1521,6 +1584,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
