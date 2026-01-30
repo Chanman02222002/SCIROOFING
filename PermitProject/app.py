@@ -790,6 +790,13 @@ app.jinja_loader = DictLoader({
                 window.alert("Incorrect password. Please try again.");
               }
             });
+
+            const params = new URLSearchParams(window.location.search);
+            const tabParam = params.get("tab");
+            if (tabParam === "project-map") {
+              const tab = new bootstrap.Tab(projectTab);
+              tab.show();
+            }
           }
         })();
       </script>
@@ -826,10 +833,22 @@ app.jinja_loader = DictLoader({
             </div>
           </div>
         </div>
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+              <h5 class="card-title">Project Map</h5>
+              <p class="card-text text-muted flex-grow-1">
+                Jump straight into the Project Map tab to review completed roof projects.
+              </p>
+              <a class="btn btn-outline-primary" href="{{ url_for('dashboard', tab='project-map') }}">
+                Open Project Map
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
     {% endblock %}
     """,
-
     # ---------- ROOF ESTIMATOR ----------
     "estimator.html": """
     {% extends "base.html" %}
@@ -1614,6 +1633,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
