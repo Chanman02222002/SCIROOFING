@@ -1612,7 +1612,9 @@ if __name__ == "__main__":
     #   pip install -r requirements.txt
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
-    app.run(debug=False, use_reloader=False, port=5001)
+    port = int(os.environ.get("PORT", "5001"))
+    app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
