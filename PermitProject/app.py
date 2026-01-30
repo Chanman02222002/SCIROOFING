@@ -10,10 +10,18 @@ from datetime import datetime
 from jinja2 import DictLoader
 import json
 import urllib.request
+import logging
 import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
 fake = Faker("en_US")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -52,9 +60,13 @@ def make_property(i: int):
 # MUNSIE: Load Real Excel (relative path for GitHub)
 # ==========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MUNSIE_FILE_PATH = os.path.join(BASE_DIR, "data", "ACTUALSTEVELISTcoralsprings.xlsx")
+MUNSIE_FILE_PATH = os.environ.get(
+    "MUNSIE_FILE_PATH",
+    os.path.join(BASE_DIR, "data", "ACTUALSTEVELISTcoralsprings.xlsx"),
+)
 
 MUNSIE_CONTACT_SLOTS = 5   # VOTER1_* ... VOTER5_*
+
 
 def _s(val):
     """Stringify a value safely (handle NaN / None)."""
@@ -112,17 +124,34 @@ def load_munsie_properties(filepath):
         props.append(prop)
     return props
 
-# Attempt to load Munsie data at startup (safe fallback)
-try:
-    munsie_properties = load_munsie_properties(MUNSIE_FILE_PATH)
-    print(f"✅ Loaded {len(munsie_properties)} Munsie properties from {MUNSIE_FILE_PATH}")
-except Exception as e:
-    print(f"⚠️ Could not load Munsie data: {e}")
-    munsie_properties = []
+_munsie_cache = None
+
+def get_munsie_properties():
+    """Lazy load Munsie data to avoid import-time crashes."""
+    global _munsie_cache
+    if _munsie_cache is not None:
+        return _munsie_cache
+    if not os.path.exists(MUNSIE_FILE_PATH):
+        logger.warning(
+            "Munsie Excel file not found at %s; continuing with empty dataset.",
+            MUNSIE_FILE_PATH,
+        )
+        _munsie_cache = []
+        return _munsie_cache
+    try:
+        _munsie_cache = load_munsie_properties(MUNSIE_FILE_PATH)
+        logger.info(
+            "Loaded %s Munsie properties from %s",
+            len(_munsie_cache),
+            MUNSIE_FILE_PATH,
+        )
+    except Exception:
+        logger.exception("Failed to load Munsie data from %s", MUNSIE_FILE_PATH)
+        _munsie_cache = []
+    return _munsie_cache
 
 # Default fake data for SCI / GENERIC
 fake_properties = [make_property(i) for i in range(1, 51)]
-
 # ==========================================================
 # USERS / AUTH
 # ==========================================================
@@ -1411,7 +1440,7 @@ def dashboard():
 
     # Choose dataset by brand
     if brand == "munsie":
-        dataset = munsie_properties
+        dataset = get_munsie_properties()
     else:
         dataset = fake_properties
 
@@ -1439,7 +1468,7 @@ def edit_property(prop_id):
     # Locate correct backing list by brand
     brand = current_brand()
     if brand == "munsie":
-        backing = munsie_properties
+        backing = get_munsie_properties()
     else:
         backing = fake_properties
 
@@ -1561,7 +1590,7 @@ def download_data(brand):
         return redirect(url_for("login"))
     if brand not in ("munsie","sci","generic"):
         abort(404)
-    data = munsie_properties if brand == "munsie" else fake_properties
+    data = get_munsie_properties() if brand == "munsie" else fake_properties
     # Convert to DataFrame
     rows = []
     for p in data:
@@ -1584,6 +1613,7 @@ if __name__ == "__main__":
     #   python app.py
     # For Render: set start command to "gunicorn app:app"
     app.run(debug=False, use_reloader=False, port=5001)
+
 
 
 
