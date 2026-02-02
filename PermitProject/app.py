@@ -475,6 +475,46 @@ app.jinja_loader = DictLoader({
                 border: 1px solid rgba(15, 23, 42, 0.08);
                 box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
             }
+            .custom-map-pin {
+                width: 24px;
+                height: 32px;
+                position: relative;
+            }
+            .custom-map-pin .pin-core {
+                position: absolute;
+                left: 50%;
+                top: 2px;
+                width: 18px;
+                height: 18px;
+                background: var(--pin-color);
+                border-radius: 50%;
+                transform: translateX(-50%);
+                border: 2px solid #fff;
+                box-shadow: 0 6px 16px rgba(15, 23, 42, 0.25);
+            }
+            .custom-map-pin .pin-core::after {
+                content: "";
+                position: absolute;
+                left: 50%;
+                bottom: -9px;
+                width: 14px;
+                height: 14px;
+                background: var(--pin-color);
+                transform: translateX(-50%) rotate(45deg);
+                border-radius: 2px;
+                box-shadow: 0 6px 12px rgba(15, 23, 42, 0.2);
+            }
+            .custom-map-pin .pin-core::before {
+                content: "";
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: 6px;
+                height: 6px;
+                background: #fff;
+                border-radius: 50%;
+                transform: translate(-50%, -50%);
+            }
             #project-map {
                 min-height: 420px;
                 width: 100%;
@@ -923,9 +963,9 @@ app.jinja_loader = DictLoader({
           const buildIcon = (color) =>
             L.divIcon({
               className: "custom-map-pin",
-              html: `<span style="display:inline-block;width:12px;height:12px;border-radius:999px;background:${color};border:2px solid #fff;box-shadow:0 0 0 2px rgba(15,23,42,.15);"></span>`,
-              iconSize: [16, 16],
-              iconAnchor: [8, 8],
+              html: `<span class="pin-core" style="--pin-color:${color};"></span>`,
+              iconSize: [24, 32],
+              iconAnchor: [12, 30],
             });
 
           const setActiveLocation = (locationId, { scroll = false, openPopup = false } = {}) => {
@@ -952,6 +992,7 @@ app.jinja_loader = DictLoader({
               button.classList.toggle("active", button.dataset.filter === filter);
             });
 
+            mapInstance?.closePopup();
             projectLocations.forEach((location) => {
               const matches =
                 isAllFilter(filter) || normalizeFilter(location.type) === normalizeFilter(filter);
@@ -973,13 +1014,15 @@ app.jinja_loader = DictLoader({
                 (!isAllFilter(filter) &&
                   normalizeFilter(activeLocation.type) !== normalizeFilter(filter))
               ) {
+                if (cardById.has(activeLocationId)) {
+                  cardById.get(activeLocationId).classList.remove("active");
+                }
                 activeLocationId = null;
               } else if (cardById.has(activeLocationId)) {
                 cardById.get(activeLocationId).classList.add("active");
               }
             }
           };
-
           const renderResults = () => {
             if (!resultsContainer) {
               return;
@@ -1914,6 +1957,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
