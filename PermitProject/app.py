@@ -468,6 +468,61 @@ app.jinja_loader = DictLoader({
                 padding: 1rem 1.2rem;
                 box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
             }
+            .map-shell {
+                position: relative;
+                border-radius: 18px;
+                overflow: hidden;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+            }
+            #project-map {
+                min-height: 420px;
+                width: 100%;
+            }
+            .map-legend {
+                display: inline-flex;
+                gap: 1rem;
+                align-items: center;
+                padding: .5rem .85rem;
+                background: rgba(255, 255, 255, 0.9);
+                border-radius: 999px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+                font-size: .85rem;
+                font-weight: 600;
+            }
+            .legend-dot {
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                margin-right: .35rem;
+            }
+            .legend-residential {
+                background: #2563eb;
+            }
+            .legend-commercial {
+                background: #f97316;
+            }
+            .map-results {
+                display: grid;
+                gap: .75rem;
+            }
+            .map-result-card {
+                background: #fff;
+                border-radius: 14px;
+                border: 1px solid rgba(15, 23, 42, 0.08);
+                padding: .85rem 1rem;
+                box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+            }
+            .map-result-card span {
+                display: inline-flex;
+                align-items: center;
+                gap: .35rem;
+                font-size: .8rem;
+                font-weight: 600;
+                color: #475569;
+            }
         </style>
     </head>
     <body class="{{ body_class or '' }}">
@@ -754,13 +809,55 @@ app.jinja_loader = DictLoader({
                 <p class="text-muted mb-0">Select the Project Map tab to enter the password and view completed roofs.</p>
               </div>
               <div id="project-map-content" class="d-none">
+                <link
+                  rel="stylesheet"
+                  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+                  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+                  crossorigin=""
+                />
                 <h5 class="mb-3">Project Map</h5>
-                <div class="border rounded-3 bg-light d-flex align-items-center justify-content-center" style="min-height:320px;">
-                  <div class="text-center">
-                    <p class="mb-2 fw-semibold">Map placeholder</p>
-                    <p class="text-muted mb-0">Residential and commercial roof projects will appear here.</p>
+                <div class="row g-4">
+                  <div class="col-lg-8">
+                    <div class="map-shell">
+                      <div id="project-map" aria-label="Broward County project map"></div>
+                    </div>
+                    <div class="mt-3">
+                      <div class="map-legend">
+                        <span><span class="legend-dot legend-residential"></span>Residential</span>
+                        <span><span class="legend-dot legend-commercial"></span>Commercial</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="col-lg-4">
+                    <div class="map-results">
+                      <div class="map-result-card">
+                        <div class="fw-semibold">Victoria Park Tile Retrofit</div>
+                        <span><span class="legend-dot legend-residential"></span>Residential · Fort Lauderdale</span>
+                        <div class="text-muted small mt-1">2,600 sq ft · Completed May 2024</div>
+                      </div>
+                      <div class="map-result-card">
+                        <div class="fw-semibold">Sawgrass Corporate Center</div>
+                        <span><span class="legend-dot legend-commercial"></span>Commercial · Sunrise</span>
+                        <div class="text-muted small mt-1">18,200 sq ft · Completed Jan 2024</div>
+                      </div>
+                      <div class="map-result-card">
+                        <div class="fw-semibold">Coral Springs Shingle Upgrade</div>
+                        <span><span class="legend-dot legend-residential"></span>Residential · Coral Springs</span>
+                        <div class="text-muted small mt-1">3,100 sq ft · Completed Mar 2024</div>
+                      </div>
+                      <div class="map-result-card">
+                        <div class="fw-semibold">Hollywood Retail Plaza</div>
+                        <span><span class="legend-dot legend-commercial"></span>Commercial · Hollywood</span>
+                        <div class="text-muted small mt-1">12,500 sq ft · Completed Feb 2024</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <script
+                  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+                  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+                  crossorigin=""
+                ></script>
               </div>
             </div>
           </div>
@@ -771,11 +868,74 @@ app.jinja_loader = DictLoader({
           const projectTab = document.getElementById("project-map-tab");
           const lockedState = document.getElementById("project-map-locked");
           const mapContent = document.getElementById("project-map-content");
+          let mapInstance = null;
           let unlocked = false;
+
+          const projectLocations = [
+            {
+              name: "Victoria Park Tile Retrofit",
+              type: "Residential",
+              city: "Fort Lauderdale",
+              coords: [26.142, -80.132],
+            },
+            {
+              name: "Sawgrass Corporate Center",
+              type: "Commercial",
+              city: "Sunrise",
+              coords: [26.149, -80.310],
+            },
+            {
+              name: "Coral Springs Shingle Upgrade",
+              type: "Residential",
+              city: "Coral Springs",
+              coords: [26.271, -80.270],
+            },
+            {
+              name: "Hollywood Retail Plaza",
+              type: "Commercial",
+              city: "Hollywood",
+              coords: [26.012, -80.142],
+            },
+          ];
+
+          const iconColors = {
+            Residential: "#2563eb",
+            Commercial: "#f97316",
+          };
+
+          const buildIcon = (color) =>
+            L.divIcon({
+              className: "custom-map-pin",
+              html: `<span style="display:inline-block;width:12px;height:12px;border-radius:999px;background:${color};border:2px solid #fff;box-shadow:0 0 0 2px rgba(15,23,42,.15);"></span>`,
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+            });
+
+          const initializeProjectMap = () => {
+            if (mapInstance || !window.L) {
+              return;
+            }
+            mapInstance = L.map("project-map", { scrollWheelZoom: false }).setView([26.125, -80.210], 10.5);
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+              maxZoom: 18,
+              attribution: "&copy; OpenStreetMap contributors",
+            }).addTo(mapInstance);
+
+            projectLocations.forEach((location) => {
+              const color = iconColors[location.type] || "#0ea5e9";
+              const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(mapInstance);
+              marker.bindPopup(
+                `<strong>${location.name}</strong><br>${location.type} · ${location.city}`
+              );
+            });
+          };
 
           if (projectTab) {
             projectTab.addEventListener("show.bs.tab", (event) => {
               if (unlocked) {
+                window.setTimeout(() => {
+                  mapInstance?.invalidateSize();
+                }, 150);
                 return;
               }
               event.preventDefault();
@@ -784,6 +944,7 @@ app.jinja_loader = DictLoader({
                 unlocked = true;
                 lockedState?.classList.add("d-none");
                 mapContent?.classList.remove("d-none");
+                initializeProjectMap();
                 const tab = new bootstrap.Tab(projectTab);
                 tab.show();
               } else if (password !== null) {
@@ -1633,6 +1794,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
