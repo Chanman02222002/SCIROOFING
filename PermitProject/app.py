@@ -955,7 +955,7 @@ app.jinja_loader = DictLoader({
           const filterButtons = document.querySelectorAll(".map-filter [data-filter]");
           const markerById = new Map();
           const cardById = new Map();
-          let activeFilter = "All";
+          let activeFilter = "all";
           let activeLocationId = null;
 
           const normalizeFilter = (value) => (value ?? "").toString().trim().toLowerCase();
@@ -1124,13 +1124,11 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          if (filterGroup) {
-            filterGroup.addEventListener("click", (event) => {
-              const target = event.target.closest("[data-filter]");
-              if (!target || !filterGroup.contains(target)) {
-                return;
-              }
-              applyFilter(target.dataset.filter);
+          if (filterGroup && filterButtons.length) {
+            filterButtons.forEach((button) => {
+              button.addEventListener("click", () => {
+                applyFilter(button.dataset.filter);
+              });
             });
           }
         })();
@@ -1968,6 +1966,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
