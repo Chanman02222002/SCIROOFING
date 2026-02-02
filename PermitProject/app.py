@@ -992,19 +992,21 @@ app.jinja_loader = DictLoader({
               button.classList.toggle("active", button.dataset.filter === filter);
             });
 
-            mapInstance?.closePopup();
-            projectLocations.forEach((location) => {
-              const matches =
-                isAllFilter(filter) || normalizeFilter(location.type) === normalizeFilter(filter);
-              const marker = markerById.get(location.id);
-              if (marker) {
-                if (matches) {
-                  marker.addTo(mapInstance);
-                } else {
-                  mapInstance.removeLayer(marker);
+            if (mapInstance) {
+              mapInstance.closePopup();
+              projectLocations.forEach((location) => {
+                const matches =
+                  isAllFilter(filter) || normalizeFilter(location.type) === normalizeFilter(filter);
+                const marker = markerById.get(location.id);
+                if (marker) {
+                  if (matches) {
+                    marker.addTo(mapInstance);
+                  } else {
+                    mapInstance.removeLayer(marker);
+                  }
                 }
-              }
-            });
+              });
+            }
 
             renderResults();
             if (activeLocationId) {
@@ -1116,9 +1118,6 @@ app.jinja_loader = DictLoader({
 
           filterButtons.forEach((button) => {
             button.addEventListener("click", () => {
-              if (!mapInstance) {
-                return;
-              }
               applyFilter(button.dataset.filter);
             });
           });
@@ -1957,6 +1956,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
