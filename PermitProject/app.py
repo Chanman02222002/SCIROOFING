@@ -515,6 +515,14 @@ app.jinja_loader = DictLoader({
                 padding: .85rem 1rem;
                 box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
             }
+            .map-result-card.active {
+                border-color: rgba(37, 99, 235, 0.6);
+                box-shadow: 0 12px 30px rgba(37, 99, 235, 0.25);
+            }
+            .map-filter .btn {
+                font-size: .85rem;
+                font-weight: 600;
+            }
             .map-result-card span {
                 display: inline-flex;
                 align-items: center;
@@ -829,28 +837,15 @@ app.jinja_loader = DictLoader({
                     </div>
                   </div>
                   <div class="col-lg-4">
-                    <div class="map-results">
-                      <div class="map-result-card">
-                        <div class="fw-semibold">Victoria Park Tile Retrofit</div>
-                        <span><span class="legend-dot legend-residential"></span>Residential · Fort Lauderdale</span>
-                        <div class="text-muted small mt-1">2,600 sq ft · Completed May 2024</div>
-                      </div>
-                      <div class="map-result-card">
-                        <div class="fw-semibold">Sawgrass Corporate Center</div>
-                        <span><span class="legend-dot legend-commercial"></span>Commercial · Sunrise</span>
-                        <div class="text-muted small mt-1">18,200 sq ft · Completed Jan 2024</div>
-                      </div>
-                      <div class="map-result-card">
-                        <div class="fw-semibold">Coral Springs Shingle Upgrade</div>
-                        <span><span class="legend-dot legend-residential"></span>Residential · Coral Springs</span>
-                        <div class="text-muted small mt-1">3,100 sq ft · Completed Mar 2024</div>
-                      </div>
-                      <div class="map-result-card">
-                        <div class="fw-semibold">Hollywood Retail Plaza</div>
-                        <span><span class="legend-dot legend-commercial"></span>Commercial · Hollywood</span>
-                        <div class="text-muted small mt-1">12,500 sq ft · Completed Feb 2024</div>
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                      <div class="fw-semibold">Listings</div>
+                      <div class="btn-group map-filter" role="group" aria-label="Filter projects">
+                        <button type="button" class="btn btn-outline-primary btn-sm active" data-filter="All">All</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Residential">Residential</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Commercial">Commercial</button>
                       </div>
                     </div>
+                    <div class="map-results" id="project-map-results"></div>
                   </div>
                 </div>
                 <script
@@ -873,27 +868,39 @@ app.jinja_loader = DictLoader({
 
           const projectLocations = [
             {
+              id: "victoria-park-tile-retrofit",
               name: "Victoria Park Tile Retrofit",
               type: "Residential",
               city: "Fort Lauderdale",
+              size: "2,600 sq ft",
+              completed: "May 2024",
               coords: [26.142, -80.132],
             },
             {
+              id: "sawgrass-corporate-center",
               name: "Sawgrass Corporate Center",
               type: "Commercial",
               city: "Sunrise",
+              size: "18,200 sq ft",
+              completed: "Jan 2024",
               coords: [26.149, -80.310],
             },
             {
+              id: "coral-springs-shingle-upgrade",
               name: "Coral Springs Shingle Upgrade",
               type: "Residential",
               city: "Coral Springs",
+              size: "3,100 sq ft",
+              completed: "Mar 2024",
               coords: [26.271, -80.270],
             },
             {
+              id: "hollywood-retail-plaza",
               name: "Hollywood Retail Plaza",
               type: "Commercial",
               city: "Hollywood",
+              size: "12,500 sq ft",
+              completed: "Feb 2024",
               coords: [26.012, -80.142],
             },
           ];
@@ -903,6 +910,13 @@ app.jinja_loader = DictLoader({
             Commercial: "#f97316",
           };
 
+          const resultsContainer = document.getElementById("project-map-results");
+          const filterButtons = document.querySelectorAll(".map-filter [data-filter]");
+          const markerById = new Map();
+          const cardById = new Map();
+          let activeFilter = "All";
+          let activeLocationId = null;
+
           const buildIcon = (color) =>
             L.divIcon({
               className: "custom-map-pin",
@@ -910,6 +924,84 @@ app.jinja_loader = DictLoader({
               iconSize: [16, 16],
               iconAnchor: [8, 8],
             });
+
+          const setActiveLocation = (locationId, { scroll = false, openPopup = false } = {}) => {
+            if (activeLocationId && cardById.has(activeLocationId)) {
+              cardById.get(activeLocationId).classList.remove("active");
+            }
+            activeLocationId = locationId;
+            const card = cardById.get(locationId);
+            if (card) {
+              card.classList.add("active");
+              if (scroll) {
+                card.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }
+            const marker = markerById.get(locationId);
+            if (marker && openPopup) {
+              marker.openPopup();
+            }
+          };
+
+          const applyFilter = (filter) => {
+            activeFilter = filter;
+            filterButtons.forEach((button) => {
+              button.classList.toggle("active", button.dataset.filter === filter);
+            });
+
+            projectLocations.forEach((location) => {
+              const matches = filter === "All" || location.type === filter;
+              const marker = markerById.get(location.id);
+              if (marker) {
+                if (matches) {
+                  marker.addTo(mapInstance);
+                } else {
+                  mapInstance.removeLayer(marker);
+                }
+              }
+            });
+
+            renderResults();
+            if (activeLocationId) {
+              const activeLocation = projectLocations.find((loc) => loc.id === activeLocationId);
+              if (!activeLocation || (filter !== "All" && activeLocation.type !== filter)) {
+                activeLocationId = null;
+              } else if (cardById.has(activeLocationId)) {
+                cardById.get(activeLocationId).classList.add("active");
+              }
+            }
+          };
+
+          const renderResults = () => {
+            if (!resultsContainer) {
+              return;
+            }
+            resultsContainer.innerHTML = "";
+            cardById.clear();
+            projectLocations
+              .filter((location) => activeFilter === "All" || location.type === activeFilter)
+              .forEach((location) => {
+                const card = document.createElement("div");
+                card.className = "map-result-card";
+                card.dataset.locationId = location.id;
+                card.innerHTML = `
+                  <div class="fw-semibold">${location.name}</div>
+                  <span>
+                    <span class="legend-dot ${location.type === "Residential" ? "legend-residential" : "legend-commercial"}"></span>
+                    ${location.type} · ${location.city}
+                  </span>
+                  <div class="text-muted small mt-1">${location.size} · Completed ${location.completed}</div>
+                `;
+                card.addEventListener("click", () => {
+                  setActiveLocation(location.id, { openPopup: true });
+                  if (mapInstance) {
+                    mapInstance.setView(location.coords, 12.5, { animate: true });
+                  }
+                });
+                resultsContainer.appendChild(card);
+                cardById.set(location.id, card);
+              });
+          };
 
           const initializeProjectMap = () => {
             if (mapInstance || !window.L) {
@@ -927,7 +1019,14 @@ app.jinja_loader = DictLoader({
               marker.bindPopup(
                 `<strong>${location.name}</strong><br>${location.type} · ${location.city}`
               );
+              marker.on("click", () => {
+                setActiveLocation(location.id, { scroll: true, openPopup: false });
+              });
+              markerById.set(location.id, marker);
             });
+
+            renderResults();
+            applyFilter(activeFilter);
           };
 
           if (projectTab) {
@@ -959,6 +1058,15 @@ app.jinja_loader = DictLoader({
               tab.show();
             }
           }
+
+          filterButtons.forEach((button) => {
+            button.addEventListener("click", () => {
+              if (!mapInstance) {
+                return;
+              }
+              applyFilter(button.dataset.filter);
+            });
+          });
         })();
       </script>
     {% endblock %}
@@ -1794,6 +1902,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
