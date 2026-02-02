@@ -951,6 +951,7 @@ app.jinja_loader = DictLoader({
           };
 
           const resultsContainer = document.getElementById("project-map-results");
+          const filterGroup = document.querySelector(".map-filter");
           const filterButtons = document.querySelectorAll(".map-filter [data-filter]");
           const markerById = new Map();
           const cardById = new Map();
@@ -987,16 +988,23 @@ app.jinja_loader = DictLoader({
           };
 
           const applyFilter = (filter) => {
-            activeFilter = filter;
+            if (!filter) {
+              return;
+            }
+            activeFilter = normalizeFilter(filter);
             filterButtons.forEach((button) => {
-              button.classList.toggle("active", button.dataset.filter === filter);
+              button.classList.toggle(
+                "active",
+                normalizeFilter(button.dataset.filter) === activeFilter
+              );
             });
 
             if (mapInstance) {
               mapInstance.closePopup();
               projectLocations.forEach((location) => {
                 const matches =
-                  isAllFilter(filter) || normalizeFilter(location.type) === normalizeFilter(filter);
+                  isAllFilter(activeFilter) ||
+                  normalizeFilter(location.type) === activeFilter;
                 const marker = markerById.get(location.id);
                 if (marker) {
                   if (matches) {
@@ -1013,8 +1021,8 @@ app.jinja_loader = DictLoader({
               const activeLocation = projectLocations.find((loc) => loc.id === activeLocationId);
               if (
                 !activeLocation ||
-                (!isAllFilter(filter) &&
-                  normalizeFilter(activeLocation.type) !== normalizeFilter(filter))
+                (!isAllFilter(activeFilter) &&
+                  normalizeFilter(activeLocation.type) !== activeFilter)
               ) {
                 if (cardById.has(activeLocationId)) {
                   cardById.get(activeLocationId).classList.remove("active");
@@ -1035,7 +1043,7 @@ app.jinja_loader = DictLoader({
               .filter(
                 (location) =>
                   isAllFilter(activeFilter) ||
-                  normalizeFilter(location.type) === normalizeFilter(activeFilter)
+                  normalizeFilter(location.type) === activeFilter
               )
               .forEach((location) => {
                 const card = document.createElement("div");
@@ -1116,11 +1124,15 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          filterButtons.forEach((button) => {
-            button.addEventListener("click", () => {
-              applyFilter(button.dataset.filter);
+          if (filterGroup) {
+            filterGroup.addEventListener("click", (event) => {
+              const target = event.target.closest("[data-filter]");
+              if (!target || !filterGroup.contains(target)) {
+                return;
+              }
+              applyFilter(target.dataset.filter);
             });
-          });
+          }
         })();
       </script>
     {% endblock %}
@@ -1956,6 +1968,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
