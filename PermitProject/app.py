@@ -125,14 +125,26 @@ def _extract_name_and_address(raw_job_name):
 
 
 _geocode_cache = {}
+_geocode_calls = 0
+ENABLE_SCI_GEOCODING = os.environ.get("SCI_ENABLE_GEOCODING", "").strip().lower() in {"1", "true", "yes", "on"}
+SCI_GEOCODE_TIMEOUT_SECONDS = float(os.environ.get("SCI_GEOCODE_TIMEOUT_SECONDS", "1.5"))
+SCI_GEOCODE_MAX_CALLS = int(os.environ.get("SCI_GEOCODE_MAX_CALLS", "10"))
 
 
 def _geocode_address(address):
+    global _geocode_calls
+
+    if not ENABLE_SCI_GEOCODING:
+        return None
+
     key = _s(address)
     if not key:
         return None
     if key in _geocode_cache:
         return _geocode_cache[key]
+    if _geocode_calls >= SCI_GEOCODE_MAX_CALLS:
+        _geocode_cache[key] = None
+        return None
 
     encoded = urllib.parse.quote(key)
     url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit=1"
@@ -141,7 +153,8 @@ def _geocode_address(address):
         headers={"User-Agent": "SCIROOFING/1.0 (project-map)"},
     )
     try:
-        with urllib.request.urlopen(request_obj, timeout=8) as response:
+        _geocode_calls += 1
+        with urllib.request.urlopen(request_obj, timeout=SCI_GEOCODE_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if payload:
             coords = [float(payload[0]["lat"]), float(payload[0]["lon"])]
@@ -2121,6 +2134,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
