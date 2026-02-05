@@ -10,8 +10,11 @@ from datetime import datetime
 from jinja2 import DictLoader
 import json
 import urllib.request
+import urllib.parse
 import logging
 import pandas as pd
+import re
+import hashlib
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -66,6 +69,16 @@ MUNSIE_FILE_PATH = os.environ.get(
 )
 
 MUNSIE_CONTACT_SLOTS = 5   # VOTER1_* ... VOTER5_*
+SCI_TRACKING_FILE_PATH = os.environ.get(
+    "SCI_TRACKING_FILE_PATH",
+    os.path.join(BASE_DIR, "data", "SCI Tracking of Projects v3.xlsx"),
+)
+SCI_PROJECT_SHEETS = {
+    "Commercial": "Commercial",
+    "Residential": "Residential",
+    "Repairs": "Repairs",
+    "Maintenance": "Maintenance",
+}
 
 
 def _s(val):
@@ -73,6 +86,169 @@ def _s(val):
     if pd.isna(val):
         return ""
     return str(val).strip()
+
+
+def _slugify(text):
+    slug = re.sub(r"[^a-z0-9]+", "-", _s(text).lower()).strip("-")
+    return slug or "project"
+
+
+def _extract_name_and_address(raw_job_name):
+    raw = _s(raw_job_name)
+    if not raw:
+        return "", ""
+
+    lines = [line.strip(" ,") for line in raw.splitlines() if line and line.strip()]
+    if len(lines) >= 2:
+        project_name = lines[0].strip()
+        address_line = " ".join(lines[1:3]).strip(" ,")
+        if any(ch.isdigit() for ch in address_line):
+            return project_name, address_line
+
+    normalized = re.sub(r"\s+", " ", raw)
+    address_match = re.search(
+        r"(\d{1,6}\s+[^,]+,\s*[^,]+,\s*F[Ll]\.?\s*\d{5}(?:-\d{4})?)",
+        normalized,
+    )
+    if not address_match:
+        address_match = re.search(
+            r"(\d{1,6}\s+.*?\bF[Ll]\b\.?\s*\d{5}(?:-\d{4})?)",
+            normalized,
+        )
+
+    if address_match:
+        address = address_match.group(1).strip(" ,")
+        project_name = normalized[: address_match.start()].strip(" ,-/")
+        return project_name, address
+
+    return normalized, ""
+
+
+_geocode_cache = {}
+
+
+def _geocode_address(address):
+    key = _s(address)
+    if not key:
+        return None
+    if key in _geocode_cache:
+        return _geocode_cache[key]
+
+    encoded = urllib.parse.quote(key)
+    url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit=1"
+    request_obj = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SCIROOFING/1.0 (project-map)"},
+    )
+    try:
+        with urllib.request.urlopen(request_obj, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload:
+            coords = [float(payload[0]["lat"]), float(payload[0]["lon"])]
+            _geocode_cache[key] = coords
+            return coords
+    except Exception:
+        logger.debug("Geocode lookup failed for address: %s", key, exc_info=True)
+
+    _geocode_cache[key] = None
+    return None
+
+
+def _estimate_coords(address, project_type):
+    city_centers = {
+        "fort lauderdale": (26.1224, -80.1373),
+        "ft. lauderdale": (26.1224, -80.1373),
+        "coral springs": (26.2712, -80.2706),
+        "sunrise": (26.1669, -80.2564),
+        "hollywood": (26.0112, -80.1495),
+        "pompano beach": (26.2379, -80.1248),
+        "boca raton": (26.3683, -80.1289),
+        "weston": (26.1004, -80.3998),
+        "tamarac": (26.2129, -80.2498),
+        "parkland": (26.31, -80.2373),
+        "cooper city": (26.0573, -80.271),
+        "miami beach": (25.7907, -80.1300),
+        "north miami": (25.8901, -80.1867),
+        "boynton beach": (26.5318, -80.0905),
+        "lantana": (26.5828, -80.0514),
+        "palm beach gardens": (26.8234, -80.1387),
+        "key largo": (25.0865, -80.4473),
+        "homestead": (25.4687, -80.4776),
+    }
+    base_lat, base_lng = 26.125, -80.21
+    address_lower = _s(address).lower()
+    for city, center in city_centers.items():
+        if city in address_lower:
+            base_lat, base_lng = center
+            break
+
+    digest = hashlib.md5(f"{project_type}:{address_lower}".encode("utf-8")).hexdigest()
+    lat_offset = (int(digest[:4], 16) / 65535.0 - 0.5) * 0.04
+    lng_offset = (int(digest[4:8], 16) / 65535.0 - 0.5) * 0.04
+    return [round(base_lat + lat_offset, 6), round(base_lng + lng_offset, 6)]
+
+
+def load_sci_project_locations(filepath):
+    if not os.path.exists(filepath):
+        logger.warning("SCI tracking file not found at %s", filepath)
+        return []
+
+    projects = []
+    seen_ids = set()
+
+    for sheet_name, project_type in SCI_PROJECT_SHEETS.items():
+        try:
+            df = pd.read_excel(filepath, sheet_name=sheet_name, header=6)
+        except Exception:
+            logger.exception("Failed reading SCI sheet '%s'", sheet_name)
+            continue
+
+        for _, row in df.iterrows():
+            raw_job_name = _s(row.get("Job Name"))
+            if not raw_job_name or raw_job_name.lower().startswith("total"):
+                continue
+
+            project_name, address = _extract_name_and_address(raw_job_name)
+            if not project_name:
+                project_name = raw_job_name
+            if not address:
+                continue
+
+            city_match = re.search(r",\s*([^,]+),\s*F[Ll]", address)
+            city = city_match.group(1).strip() if city_match else "Florida"
+            status = _s(row.get("Project Status")) or _s(row.get("Repair Status")) or _s(row.get("Maint. Status"))
+
+            base_id = _slugify(f"{project_type}-{project_name}-{address}")
+            location_id = base_id
+            counter = 2
+            while location_id in seen_ids:
+                location_id = f"{base_id}-{counter}"
+                counter += 1
+            seen_ids.add(location_id)
+
+            projects.append({
+                "id": location_id,
+                "name": project_name,
+                "type": project_type,
+                "address": address,
+                "city": city,
+                "status": status,
+                "coords": _geocode_address(address) or _estimate_coords(address, project_type),
+            })
+
+    return projects
+
+
+_sci_projects_cache = None
+
+
+def get_sci_project_locations():
+    global _sci_projects_cache
+    if _sci_projects_cache is None:
+        _sci_projects_cache = load_sci_project_locations(SCI_TRACKING_FILE_PATH)
+        logger.info("Loaded %s SCI map projects", len(_sci_projects_cache))
+    return _sci_projects_cache
+
 
 def load_munsie_properties(filepath):
     """
@@ -544,6 +720,12 @@ app.jinja_loader = DictLoader({
             .legend-commercial {
                 background: #f97316;
             }
+            .legend-repairs {
+                background: #dc2626;
+            }
+            .legend-maintenance {
+                background: #059669;
+            }
             .map-results {
                 display: grid;
                 gap: .75rem;
@@ -873,6 +1055,8 @@ app.jinja_loader = DictLoader({
                       <div class="map-legend">
                         <span><span class="legend-dot legend-residential"></span>Residential</span>
                         <span><span class="legend-dot legend-commercial"></span>Commercial</span>
+                        <span><span class="legend-dot legend-repairs"></span>Repairs</span>
+                        <span><span class="legend-dot legend-maintenance"></span>Maintenance</span>
                       </div>
                     </div>
                   </div>
@@ -883,6 +1067,8 @@ app.jinja_loader = DictLoader({
                         <button type="button" class="btn btn-outline-primary btn-sm active" data-filter="All">All</button>
                         <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Residential">Residential</button>
                         <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Commercial">Commercial</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Repairs">Repairs</button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Maintenance">Maintenance</button>
                       </div>
                     </div>
                     <div class="map-results" id="project-map-results"></div>
@@ -906,48 +1092,13 @@ app.jinja_loader = DictLoader({
           let mapInstance = null;
           let unlocked = false;
 
-          const projectLocations = [
-            {
-              id: "victoria-park-tile-retrofit",
-              name: "Victoria Park Tile Retrofit",
-              type: "Residential",
-              city: "Fort Lauderdale",
-              size: "2,600 sq ft",
-              completed: "May 2024",
-              coords: [26.142, -80.132],
-            },
-            {
-              id: "sawgrass-corporate-center",
-              name: "Sawgrass Corporate Center",
-              type: "Commercial",
-              city: "Sunrise",
-              size: "18,200 sq ft",
-              completed: "Jan 2024",
-              coords: [26.149, -80.310],
-            },
-            {
-              id: "coral-springs-shingle-upgrade",
-              name: "Coral Springs Shingle Upgrade",
-              type: "Residential",
-              city: "Coral Springs",
-              size: "3,100 sq ft",
-              completed: "Mar 2024",
-              coords: [26.271, -80.270],
-            },
-            {
-              id: "hollywood-retail-plaza",
-              name: "Hollywood Retail Plaza",
-              type: "Commercial",
-              city: "Hollywood",
-              size: "12,500 sq ft",
-              completed: "Feb 2024",
-              coords: [26.012, -80.142],
-            },
-          ];
+          const projectLocations = {{ sci_project_locations|tojson }};
 
           const iconColors = {
             Residential: "#2563eb",
             Commercial: "#f97316",
+            Repairs: "#dc2626",
+            Maintenance: "#059669",
           };
 
           const resultsContainer = document.getElementById("project-map-results");
@@ -1049,13 +1200,15 @@ app.jinja_loader = DictLoader({
                 const card = document.createElement("div");
                 card.className = "map-result-card";
                 card.dataset.locationId = location.id;
+                const legendClass = `legend-${(location.type || "").toString().toLowerCase()}`;
                 card.innerHTML = `
                   <div class="fw-semibold">${location.name}</div>
                   <span>
-                    <span class="legend-dot ${location.type === "Residential" ? "legend-residential" : "legend-commercial"}"></span>
+                    <span class="legend-dot ${legendClass}"></span>
                     ${location.type} · ${location.city}
                   </span>
-                  <div class="text-muted small mt-1">${location.size} · Completed ${location.completed}</div>
+                  <div class="text-muted small mt-1">${location.address || ""}</div>
+                  <div class="text-muted small">Status: ${location.status || "Unknown"}</div>
                 `;
                 card.addEventListener("click", () => {
                   setActiveLocation(location.id, { openPopup: true });
@@ -1082,7 +1235,7 @@ app.jinja_loader = DictLoader({
               const color = iconColors[location.type] || "#0ea5e9";
               const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(mapInstance);
               marker.bindPopup(
-                `<strong>${location.name}</strong><br>${location.type} · ${location.city}`
+                `<strong>${location.name}</strong><br>${location.type} · ${location.city}<br>${location.address || ""}<br>Status: ${location.status || "Unknown"}`
               );
               marker.on("click", () => {
                 setActiveLocation(location.id, { scroll: true, openPopup: false });
@@ -1803,14 +1956,16 @@ def dashboard():
     ctx = filter_properties_from_request(brand_props)
 
     # Choose the correct client page by brand
+    extra_context = {}
     if brand == "sci":
         template = "sci_dashboard.html"
+        extra_context["sci_project_locations"] = get_sci_project_locations()
     elif brand == "munsie":
         template = "munsie_dashboard.html"
     else:
         template = "generic_dashboard.html"
 
-    return render_template(template, title="Permit Database", **ctx)
+    return render_template(template, title="Permit Database", **ctx, **extra_context)
 
 @app.route("/property/<int:prop_id>", methods=["GET","POST"])
 def edit_property(prop_id):
@@ -1966,6 +2121,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
