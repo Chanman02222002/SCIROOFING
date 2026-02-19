@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# bust cache 2026-02-19-v4
-RUN echo "fresh build v4"
+# bust cache 2026-02-19-v5
+RUN echo "fresh build v5"
 
 RUN apt-get update && apt-get install -y \
     chromium \
@@ -21,10 +21,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY PermitProject/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY PermitProject/ .
+COPY . .
 
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
