@@ -2103,15 +2103,9 @@ def _resolve_chromedriver_binary():
             return candidate
     return ""
 
-
 def create_driver():
     chrome_options = Options()
-
-    print("Chromium exists:", os.path.exists("/usr/bin/chromium"))
-    print("Chromedriver 1:", os.path.exists("/usr/bin/chromedriver"))
-    print("Chromedriver 2:", os.path.exists("/usr/lib/chromium/chromedriver"))
-    # Hardcoded Docker paths
-    chrome_options.binary_location = "/usr/bin/chromium"
+    chrome_options.binary_location = os.environ.get("CHROME_BIN")
 
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -2119,9 +2113,7 @@ def create_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    service = Service("/usr/bin/chromedriver")
-
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)
     return driver
 
 def _bcpa_collect_property_data(address, city):
@@ -2636,6 +2628,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
