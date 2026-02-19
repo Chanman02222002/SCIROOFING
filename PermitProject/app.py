@@ -4,6 +4,7 @@ from flask import (
 )
 import os
 import random
+import shutil
 from copy import deepcopy
 from faker import Faker
 from datetime import datetime
@@ -2075,10 +2076,26 @@ def _extract_json_object(raw_text):
         raise ValueError("OpenAI response did not contain JSON.")
     return json.loads(match.group(0))
 
+def _resolve_chrome_binary():
+    candidates = [
+        os.environ.get("CHROME_BIN"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return ""
 
 def create_driver():
     chrome_options = Options()
-    chrome_options.binary_location = "/usr/bin/chromium"
+    chrome_binary = _resolve_chrome_binary()
+    if chrome_binary:
+        chrome_options.binary_location = chrome_binary
+    else:
+        logger.warning("No Chrome/Chromium binary found in PATH; relying on Selenium Manager discovery.")
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -2600,6 +2617,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
