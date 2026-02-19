@@ -22,6 +22,7 @@ import smtplib
 from email.message import EmailMessage
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -2089,6 +2090,19 @@ def _resolve_chrome_binary():
             return candidate
     return ""
 
+
+def _resolve_chromedriver_binary():
+    candidates = [
+        os.environ.get("CHROMEDRIVER_PATH"),
+        shutil.which("chromedriver"),
+        "/usr/bin/chromedriver",
+        "/usr/local/bin/chromedriver",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return ""
+
 def create_driver():
     chrome_options = Options()
     chrome_binary = _resolve_chrome_binary()
@@ -2101,9 +2115,14 @@ def create_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    driver = webdriver.Chrome(options=chrome_options)
+    chromedriver_binary = _resolve_chromedriver_binary()
+    if chromedriver_binary:
+        logger.info("Using chromedriver at %s", chromedriver_binary)
+        driver = webdriver.Chrome(service=Service(chromedriver_binary), options=chrome_options)
+    else:
+        logger.warning("No chromedriver binary found in PATH; relying on Selenium Manager discovery.")
+        driver = webdriver.Chrome(options=chrome_options)
     return driver
-
 
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
@@ -2617,6 +2636,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
