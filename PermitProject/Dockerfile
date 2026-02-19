@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
-RUN echo "fresh build v3"
-# Install dependencies + Chromium (from apt, not manual download)
+# bust cache 2026-02-19-v4
+RUN echo "fresh build v4"
+
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
@@ -20,10 +21,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY PermitProject/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY PermitProject/ .
 
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
