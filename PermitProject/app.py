@@ -2618,6 +2618,29 @@ def download_data(brand):
     df.to_csv(out_path, index=False)
     return send_file(out_path, as_attachment=True, download_name=f"{brand}_properties.csv")
 
+@app.route("/debug-chrome")
+def debug_chrome():
+    import subprocess
+    results = {}
+    
+    for cmd in [
+        "which chromium",
+        "which chromium-browser", 
+        "which google-chrome",
+        "which chromedriver",
+        "ls /usr/bin/chrom*",
+        "ls /usr/lib/chromium*",
+        "chromium --version",
+        "chromedriver --version",
+    ]:
+        try:
+            out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode()
+            results[cmd] = out.strip()
+        except Exception as e:
+            results[cmd] = f"ERROR: {e}"
+    
+    return results
+
 # --------------------------
 # Run
 # --------------------------
@@ -2628,6 +2651,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
