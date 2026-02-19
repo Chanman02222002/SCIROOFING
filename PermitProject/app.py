@@ -2105,23 +2105,18 @@ def _resolve_chromedriver_binary():
 
 def create_driver():
     chrome_options = Options()
-    chrome_binary = _resolve_chrome_binary()
-    if chrome_binary:
-        chrome_options.binary_location = chrome_binary
-    else:
-        logger.warning("No Chrome/Chromium binary found in PATH; relying on Selenium Manager discovery.")
-    chrome_options.add_argument("--headless")
+
+    # Tell Selenium where Chromium is installed in Railway
+    chrome_options.binary_location = shutil.which("chromium")
+
+    # Required for Railway (Linux container)
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-    chromedriver_binary = _resolve_chromedriver_binary()
-    if chromedriver_binary:
-        logger.info("Using chromedriver at %s", chromedriver_binary)
-        driver = webdriver.Chrome(service=Service(chromedriver_binary), options=chrome_options)
-    else:
-        logger.warning("No chromedriver binary found in PATH; relying on Selenium Manager discovery.")
-        driver = webdriver.Chrome(options=chrome_options)
+
+    driver = webdriver.Chrome(options=chrome_options)
     return driver
 
 def _bcpa_collect_property_data(address, city):
@@ -2636,6 +2631,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
