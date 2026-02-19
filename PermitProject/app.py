@@ -2106,7 +2106,9 @@ def _resolve_chromedriver_binary():
 
 def create_driver():
     chrome_options = Options()
-    chrome_options.binary_location = os.environ.get("CHROME_BIN")
+
+    # Hardcoded Docker paths
+    chrome_options.binary_location = "/usr/bin/chromium"
 
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -2114,7 +2116,7 @@ def create_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    service = Service(os.environ.get("CHROMEDRIVER_PATH"))
+    service = Service("/usr/bin/chromedriver")
 
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
@@ -2631,6 +2633,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
