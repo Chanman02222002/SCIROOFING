@@ -15,6 +15,8 @@ import logging
 import pandas as pd
 import re
 import hashlib
+import smtplib
+from email.message import EmailMessage
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -28,6 +30,11 @@ if not logger.handlers:
 
 fake = Faker("en_US")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME or "")
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -656,6 +663,76 @@ app.jinja_loader = DictLoader({
                 border: 1px solid rgba(15,23,42,.08);
                 padding: 1rem 1.2rem;
                 box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+            }
+            .broward-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: .4rem;
+                border-radius: 999px;
+                font-size: .75rem;
+                font-weight: 700;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+                padding: .35rem .7rem;
+                color: #0f766e;
+                background: rgba(20, 184, 166, .14);
+            }
+            .loading-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(2, 6, 23, .72);
+                backdrop-filter: blur(3px);
+                display: none;
+                z-index: 2000;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+            }
+            .loading-overlay.active { display: flex; }
+            .loading-card {
+                background: rgba(15, 23, 42, .92);
+                border: 1px solid rgba(148, 163, 184, .35);
+                border-radius: 18px;
+                padding: 1.4rem 1.6rem;
+                min-width: 290px;
+                box-shadow: 0 20px 50px rgba(2, 6, 23, .35);
+                text-align: center;
+            }
+            .spinner {
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                border: 3px solid rgba(255, 255, 255, .25);
+                border-top-color: #38bdf8;
+                animation: spin 1s linear infinite;
+                margin: 0 auto .85rem;
+            }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            .waste-table-wrap {
+                overflow-x: auto;
+                border-radius: 14px;
+                border: 1px solid rgba(15, 23, 42, .08);
+                background: #fff;
+            }
+            .waste-table {
+                min-width: 660px;
+                margin: 0;
+            }
+            .waste-table th,
+            .waste-table td {
+                text-align: center;
+                padding: .7rem .5rem;
+                border-color: rgba(148, 163, 184, .22);
+            }
+            .waste-label-cell {
+                text-align: left !important;
+                font-weight: 600;
+                color: #334155;
+                min-width: 120px;
+            }
+            .waste-recommended {
+                background: rgba(59, 130, 246, .12);
+                font-weight: 700;
             }
             .map-shell {
                 position: relative;
@@ -1357,9 +1434,9 @@ app.jinja_loader = DictLoader({
           <div class="estimator-header">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
               <div>
-                <div class="estimate-badge mb-2">AI-Guided Estimator</div>
+                <div class="estimate-badge mb-2">Estimator Command Center</div>
                 <h2>Roof Estimator Tool</h2>
-                <p>Generate a polished pricing range in under two minutes, with smart adjustments for pitch, access, and material.</p>
+                <p>Use standard estimating or launch the dedicated Broward AI Search beta for address-driven takeoff guidance.</p>
               </div>
             </div>
           </div>
@@ -1368,18 +1445,13 @@ app.jinja_loader = DictLoader({
               <div class="estimator-panel h-100">
                 <div class="d-flex align-items-center justify-content-between mb-3">
                   <div class="estimate-badge">Powered by GPT-4.1-mini</div>
-                  <span class="text-muted small">Version 2.0</span>
+                  <span class="text-muted small">Version 3.0</span>
                 </div>
-                <h5 class="mb-2">Project Inputs</h5>
-                <p class="text-muted mb-4">
-                  Share a few details to unlock a modern estimate layout with scope highlights and pricing guidance.
-                </p>
-                <div class="estimator-steps mb-4">
-                  <div class="estimator-step"><span class="step-index">1</span>Define project type + material</div>
-                  <div class="estimator-step"><span class="step-index">2</span>Capture square footage + pitch</div>
-                  <div class="estimator-step"><span class="step-index">3</span>Confirm access + story height</div>
-                </div>
-                <form method="post" class="vstack gap-3">
+
+                <h5 class="mb-2">Standard Estimate</h5>
+                <p class="text-muted mb-3">Classic manual estimator for quick proposal pricing.</p>
+                <form method="post" class="vstack gap-3 estimator-form" data-loading-message="Generating your estimate...">
+                  <input type="hidden" name="action" value="standard_estimate">
                   <div>
                     <label class="form-label">Project Type</label>
                     <select name="project_type" class="form-select" required>
@@ -1424,53 +1496,104 @@ app.jinja_loader = DictLoader({
                   </div>
                   <button class="btn btn-primary btn-lg">Generate Estimate</button>
                 </form>
+
+                <hr class="my-4">
+
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <h5 class="mb-0">Broward AI Search</h5>
+                  <span class="broward-chip">Broward Beta</span>
+                </div>
+                <p class="text-muted mb-3">Separate AI search flow for Broward properties with address + city enrichment and email-ready results.</p>
+                <form method="post" class="vstack gap-3 estimator-form" data-loading-message="Running Broward AI Search...">
+                  <input type="hidden" name="action" value="broward_ai_search">
+                  <div>
+                    <label class="form-label">Property Address</label>
+                    <input type="text" name="search_address" class="form-control" placeholder="123 Main St" value="{{ broward_form.search_address or '' }}" required>
+                  </div>
+                  <div>
+                    <label class="form-label">City (Broward)</label>
+                    <div class="input-group">
+                      <input type="text" id="broward-city" name="search_city" class="form-control" placeholder="Fort Lauderdale" value="{{ broward_form.search_city or '' }}" required>
+                      <button class="btn btn-outline-primary" id="add-city-btn" type="button">Add City</button>
+                    </div>
+                    <div class="form-text" id="city-preview">{{ broward_query or 'Address, City will appear here' }}</div>
+                  </div>
+                  <div>
+                    <label class="form-label">Email Result To (optional)</label>
+                    <input type="email" name="result_email" class="form-control" placeholder="estimates@company.com" value="{{ broward_form.result_email or '' }}">
+                  </div>
+                  <button class="btn btn-dark btn-lg">Run Broward AI Search</button>
+                </form>
               </div>
             </div>
             <div class="col-lg-7">
               <div class="estimator-panel">
                 <div class="d-flex flex-wrap align-items-center justify-content-between mb-3">
-                  <h4 class="mb-0">Estimate Preview</h4>
-                  <span class="text-muted small">Styled for client-ready delivery</span>
+                  <h4 class="mb-0">Results Studio</h4>
+                  <span class="text-muted small">Client-ready output</span>
                 </div>
-                {% if estimate %}
+
+                {% if broward_result %}
+                  <div class="estimate-result mb-3">
+                    <div class="row g-3">
+                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Pitch</div><strong>{{ broward_result.pitch }}/12</strong></div></div>
+                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Area (sqft)</div><strong>{{ '{:,.0f}'.format(broward_result.final_area) }}</strong></div></div>
+                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Squares</div><strong>{{ '%.1f'|format(broward_result.final_squares) }}</strong></div></div>
+                    </div>
+                  </div>
+                  <div class="mb-3 small text-muted">
+                    <strong>Property:</strong> {{ broward_result.address }}, {{ broward_result.city }}<br>
+                    <strong>Ground Plane:</strong> {{ '{:,.0f}'.format(broward_result.ground_area) }} sqft ·
+                    <strong>Complexity:</strong> {{ broward_result.complexity|capitalize }} ·
+                    <strong>Recommended Waste:</strong> {{ broward_result.recommended_waste }}%
+                  </div>
+                  <div class="waste-table-wrap mb-3">
+                    <table class="table waste-table align-middle">
+                      <tr>
+                        <th class="waste-label-cell">Waste %</th>
+                        {% for row in broward_result.waste_breakdown %}
+                          <th class="{% if row.recommended %}waste-recommended{% endif %}">{{ row.waste }}%</th>
+                        {% endfor %}
+                      </tr>
+                      <tr>
+                        <td class="waste-label-cell">Area (sqft)</td>
+                        {% for row in broward_result.waste_breakdown %}
+                          <td class="{% if row.recommended %}waste-recommended{% endif %}">{{ '{:,.0f}'.format(row.area) }}</td>
+                        {% endfor %}
+                      </tr>
+                      <tr>
+                        <td class="waste-label-cell">Squares</td>
+                        {% for row in broward_result.waste_breakdown %}
+                          <td class="{% if row.recommended %}waste-recommended{% endif %}">{{ '%.1f'|format(row.squares) }}</td>
+                        {% endfor %}
+                      </tr>
+                    </table>
+                  </div>
+                  <div class="text-muted small">Broward AI Search is in beta. Validate on-site before ordering materials.</div>
+                {% elif estimate %}
                   <div class="estimate-result mb-4">
                     <div class="row g-3">
                       <div class="col-md-4">
-                        <div class="estimate-kpi">
-                          <div class="text-muted small">Estimated Range</div>
-                          <strong>{{ estimate.range }}</strong>
-                        </div>
+                        <div class="estimate-kpi"><div class="text-muted small">Estimated Range</div><strong>{{ estimate.range }}</strong></div>
                       </div>
                       <div class="col-md-4">
-                        <div class="estimate-kpi">
-                          <div class="text-muted small">Base Cost / Sq Ft</div>
-                          <strong>{{ estimate.rate }}</strong>
-                        </div>
+                        <div class="estimate-kpi"><div class="text-muted small">Base Cost / Sq Ft</div><strong>{{ estimate.rate }}</strong></div>
                       </div>
                       <div class="col-md-4">
-                        <div class="estimate-kpi">
-                          <div class="text-muted small">Confidence</div>
-                          <strong>{{ estimate.confidence }}</strong>
-                        </div>
+                        <div class="estimate-kpi"><div class="text-muted small">Confidence</div><strong>{{ estimate.confidence }}</strong></div>
                       </div>
                     </div>
                   </div>
-                  <div class="mb-3">
-                    {{ estimate.summary | safe }}
-                  </div>
-                  <div class="text-muted small">
-                    This estimate is informational and should be validated with a site inspection.
-                  </div>
+                  <div class="mb-3">{{ estimate.summary | safe }}</div>
+                  <div class="text-muted small">This estimate is informational and should be validated with a site inspection.</div>
                 {% else %}
-                  <div class="text-muted mb-4">
-                    Provide the project details to see a tailored estimate summary here.
-                  </div>
+                  <div class="text-muted mb-4">Generate a standard estimate or run Broward AI Search to see polished results here.</div>
                   <div class="estimate-result">
                     <h6 class="mb-2">What you will get</h6>
                     <ul class="mb-0 text-muted">
-                      <li>Clear pricing range with material-driven adjustments.</li>
-                      <li>Scope highlights to support your proposal narrative.</li>
-                      <li>Confidence level to guide next steps.</li>
+                      <li>Dedicated Broward AI search button and loading state.</li>
+                      <li>Professional result layout with waste overage options.</li>
+                      <li>Optional email delivery to your chosen recipient.</li>
                     </ul>
                   </div>
                 {% endif %}
@@ -1479,6 +1602,41 @@ app.jinja_loader = DictLoader({
           </div>
         </div>
       </section>
+
+      <div class="loading-overlay" id="loading-overlay" aria-live="polite" aria-hidden="true">
+        <div class="loading-card">
+          <div class="spinner"></div>
+          <div class="fw-semibold" id="loading-message">Running...</div>
+          <div class="small text-white-50 mt-2">Please wait while we process your request.</div>
+        </div>
+      </div>
+
+      <script>
+        (function () {
+          const overlay = document.getElementById('loading-overlay');
+          const loadingMessage = document.getElementById('loading-message');
+          const forms = document.querySelectorAll('.estimator-form');
+          forms.forEach((form) => {
+            form.addEventListener('submit', () => {
+              loadingMessage.textContent = form.dataset.loadingMessage || 'Working...';
+              overlay.classList.add('active');
+              overlay.setAttribute('aria-hidden', 'false');
+            });
+          });
+
+          const cityInput = document.getElementById('broward-city');
+          const addressInput = document.querySelector('input[name="search_address"]');
+          const addCityBtn = document.getElementById('add-city-btn');
+          const cityPreview = document.getElementById('city-preview');
+          if (addCityBtn && cityInput && cityPreview && addressInput) {
+            addCityBtn.addEventListener('click', () => {
+              const address = addressInput.value.trim();
+              const city = cityInput.value.trim();
+              cityPreview.textContent = (address && city) ? `${address}, ${city}` : (city || 'Address, City will appear here');
+            });
+          }
+        })();
+      </script>
     {% endblock %}
     """,
 
@@ -1861,6 +2019,183 @@ def generate_estimate(payload):
         "confidence": "Medium",
         "summary": summary_html,
     }
+
+
+BROWARD_PITCH_MULTIPLIERS = {
+    0: 1.000, 2: 1.014, 3: 1.031, 4: 1.054,
+    5: 1.083, 6: 1.118, 7: 1.158, 8: 1.202,
+    9: 1.250, 10: 1.302, 12: 1.414,
+}
+BROWARD_COMPLEXITY_MULTIPLIERS = {
+    "simple": 1.00,
+    "moderate": 1.05,
+    "complex": 1.10,
+}
+BROWARD_ESTIMATOR_ADJUSTMENT = 1.05
+BROWARD_WASTE_OPTIONS = [0, 10, 12, 15, 17, 20, 22]
+
+
+def _safe_int(value, fallback):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _safe_float(value, fallback):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _fake_bcpa_ground_area(address, city):
+    seed = hashlib.md5(f"{address}|{city}".lower().encode("utf-8")).hexdigest()
+    return 1400 + (int(seed[:6], 16) % 2800)
+
+
+def _ai_guess_pitch_complexity(address, city):
+    fallback = {"pitch": 5, "complexity": "moderate", "waste_percent": 12}
+    if not OPENAI_API_KEY:
+        return fallback
+
+    prompt = (
+        "You are a Broward County roof estimator assistant. "
+        "Given an address and city, provide a rough estimating guess in strict JSON only: "
+        "{\"pitch\": integer, \"complexity\": \"simple|moderate|complex\", \"waste_percent\": number}. "
+        "Use conservative assumptions for unknown details."
+    )
+    user_payload = f"Address: {address}\nCity: {city}\nCounty: Broward"
+
+    try:
+        request_body = json.dumps({
+            "model": "gpt-4.1-mini",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_payload},
+            ],
+            "temperature": 0.2,
+        }).encode("utf-8")
+        request_obj = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request_obj, timeout=15) as response:
+            response_data = json.loads(response.read().decode("utf-8"))
+        ai_text = response_data["choices"][0]["message"]["content"]
+        json_match = re.search(r"\{.*\}", ai_text, re.DOTALL)
+        parsed = json.loads(json_match.group(0)) if json_match else fallback
+        return {
+            "pitch": _safe_int(parsed.get("pitch"), 5),
+            "complexity": str(parsed.get("complexity", "moderate")).strip().lower(),
+            "waste_percent": _safe_float(parsed.get("waste_percent"), 12.0),
+        }
+    except Exception:
+        logger.exception("Broward AI guess failed; using defaults")
+        return fallback
+
+
+def generate_broward_estimate(address, city):
+    cleaned_city = city.strip()
+    if "broward" not in cleaned_city.lower() and cleaned_city.lower() not in {
+        "fort lauderdale", "hollywood", "pompano beach", "coral springs", "sunrise", "weston", "davie",
+        "plantation", "miramar", "coconut creek", "deerfield beach", "oakland park", "lauderhill", "tamarac",
+    }:
+        cleaned_city = f"{cleaned_city} (Broward)" if cleaned_city else "Broward"
+
+    ground_area = _fake_bcpa_ground_area(address, cleaned_city)
+    ai_guess = _ai_guess_pitch_complexity(address, cleaned_city)
+
+    pitch = _safe_int(ai_guess.get("pitch"), 5)
+    complexity = str(ai_guess.get("complexity", "moderate")).lower()
+    waste_percent = _safe_float(ai_guess.get("waste_percent"), 12.0)
+
+    pitch_multiplier = BROWARD_PITCH_MULTIPLIERS.get(pitch, 1.118)
+    complexity_multiplier = BROWARD_COMPLEXITY_MULTIPLIERS.get(complexity, 1.05)
+
+    roof_surface = ground_area * pitch_multiplier * complexity_multiplier
+    adjusted_surface = roof_surface * BROWARD_ESTIMATOR_ADJUSTMENT
+    final_area = adjusted_surface * (1 + waste_percent / 100)
+    final_squares = final_area / 100
+
+    waste_breakdown = []
+    for option in BROWARD_WASTE_OPTIONS:
+        area_option = adjusted_surface * (1 + option / 100)
+        waste_breakdown.append({
+            "waste": option,
+            "area": round(area_option, 0),
+            "squares": round(area_option / 100, 1),
+            "recommended": abs(option - waste_percent) < 1.1,
+        })
+
+    return {
+        "address": address,
+        "city": cleaned_city,
+        "ground_area": round(ground_area, 0),
+        "pitch": pitch,
+        "complexity": complexity,
+        "recommended_waste": round(waste_percent, 1),
+        "adjusted_surface": round(adjusted_surface, 0),
+        "final_area": round(final_area, 0),
+        "final_squares": round(final_squares, 1),
+        "waste_breakdown": waste_breakdown,
+    }
+
+
+def build_broward_email_summary(result):
+    lines = [
+        f"Subject: Broward AI Roof Estimate - {result['address']}, {result['city']}",
+        "",
+        "Team,",
+        "",
+        "Below is the Broward AI estimate summary.",
+        "",
+        f"Property: {result['address']}, {result['city']}",
+        f"Ground Plane Area: {result['ground_area']:,.0f} sq ft",
+        f"Pitch: {result['pitch']}/12",
+        f"Complexity: {result['complexity'].capitalize()}",
+        f"Adjusted Surface: {result['adjusted_surface']:,.0f} sq ft",
+        f"Recommended Waste: {result['recommended_waste']}%",
+        f"Final Quantity: {result['final_area']:,.0f} sq ft ({result['final_squares']} squares)",
+        "",
+        "Waste Breakdown:",
+    ]
+    for row in result["waste_breakdown"]:
+        lines.append(f"{row['waste']}% -> {row['area']:,.0f} sq ft ({row['squares']} squares)")
+    lines.extend([
+        "",
+        "Notes:",
+        "- Broward AI Search is currently in beta.",
+        "- Figures are directional and should be field-verified.",
+    ])
+    return "\n".join(lines)
+
+
+def send_estimate_email(recipient, subject, body):
+    if not (SMTP_HOST and SMTP_FROM_EMAIL):
+        return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL to enable outbound emails."
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM_EMAIL
+        msg["To"] = recipient
+        msg.set_content(body)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            smtp.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True, f"Estimate emailed to {recipient}."
+    except Exception as exc:
+        logger.exception("Failed sending estimate email")
+        return False, f"Unable to send email: {exc}"
 # ==========================================================
 # ROUTES
 # ==========================================================
@@ -1916,37 +2251,70 @@ def roof_estimator():
         "pitch": "",
         "stories": "",
     }
+    broward_form = {
+        "search_address": "",
+        "search_city": "",
+        "result_email": "",
+    }
     estimate = None
+    broward_result = None
+    broward_query = ""
 
     if request.method == "POST":
-        form_data = {
-            "project_type": request.form.get("project_type", "").strip(),
-            "material_type": request.form.get("material_type", "").strip(),
-            "square_footage": request.form.get("square_footage", "").strip(),
-            "pitch": request.form.get("pitch", "").strip(),
-            "stories": request.form.get("stories", "").strip(),
-        }
-        try:
-            sqft = int(form_data["square_footage"])
-        except ValueError:
-            sqft = 0
-        if not all([form_data["project_type"], form_data["material_type"], form_data["pitch"], form_data["stories"]]) or sqft <= 0:
-            flash("Please complete all fields with valid values.")
+        action = request.form.get("action", "standard_estimate").strip()
+
+        if action == "broward_ai_search":
+            broward_form = {
+                "search_address": request.form.get("search_address", "").strip(),
+                "search_city": request.form.get("search_city", "").strip(),
+                "result_email": request.form.get("result_email", "").strip(),
+            }
+            broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
+            if not broward_form["search_address"] or not broward_form["search_city"]:
+                flash("Please provide both address and city for Broward AI Search.")
+            else:
+                broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                flash("Broward AI Search complete.")
+                if broward_form["result_email"]:
+                    summary = build_broward_email_summary(broward_result)
+                    subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
+                    sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary)
+                    flash(email_message)
+                    if not sent:
+                        flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL to enable email delivery.")
+
         else:
-            estimate = generate_estimate({
-                "project_type": form_data["project_type"],
-                "material_type": form_data["material_type"],
-                "square_footage": sqft,
-                "pitch": form_data["pitch"],
-                "stories": form_data["stories"],
-            })
-            form_data["square_footage"] = sqft
+            form_data = {
+                "project_type": request.form.get("project_type", "").strip(),
+                "material_type": request.form.get("material_type", "").strip(),
+                "square_footage": request.form.get("square_footage", "").strip(),
+                "pitch": request.form.get("pitch", "").strip(),
+                "stories": request.form.get("stories", "").strip(),
+            }
+            try:
+                sqft = int(form_data["square_footage"])
+            except ValueError:
+                sqft = 0
+            if not all([form_data["project_type"], form_data["material_type"], form_data["pitch"], form_data["stories"]]) or sqft <= 0:
+                flash("Please complete all fields with valid values.")
+            else:
+                estimate = generate_estimate({
+                    "project_type": form_data["project_type"],
+                    "material_type": form_data["material_type"],
+                    "square_footage": sqft,
+                    "pitch": form_data["pitch"],
+                    "stories": form_data["stories"],
+                })
+                form_data["square_footage"] = sqft
 
     return render_template(
         "estimator.html",
         title="Roof Estimator",
         form=form_data,
+        broward_form=broward_form,
         estimate=estimate,
+        broward_result=broward_result,
+        broward_query=broward_query,
         body_class="estimator-page",
     )
 @app.route("/dashboard")
@@ -2134,6 +2502,14 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
+
+
+
+
+
+
+
 
 
 
