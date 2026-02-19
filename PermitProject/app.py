@@ -2103,13 +2103,18 @@ def _resolve_chromedriver_binary():
             return candidate
     return ""
 
+
 def create_driver():
     chrome_options = Options()
 
-    # Tell Selenium where Chromium is installed in Railway
-    chrome_options.binary_location = shutil.which("chromium")
+    chromium_path = shutil.which("chromium")
+    print("Chromium path:", chromium_path)
 
-    # Required for Railway (Linux container)
+    if not chromium_path:
+        raise Exception("Chromium is NOT installed in this container")
+
+    chrome_options.binary_location = chromium_path
+
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -2631,6 +2636,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
