@@ -2107,6 +2107,9 @@ def _resolve_chromedriver_binary():
 def create_driver():
     chrome_options = Options()
 
+    print("Chromium exists:", os.path.exists("/usr/bin/chromium"))
+    print("Chromedriver 1:", os.path.exists("/usr/bin/chromedriver"))
+    print("Chromedriver 2:", os.path.exists("/usr/lib/chromium/chromedriver"))
     # Hardcoded Docker paths
     chrome_options.binary_location = "/usr/bin/chromium"
 
@@ -2633,6 +2636,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
