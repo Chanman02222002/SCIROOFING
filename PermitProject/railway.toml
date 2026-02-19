@@ -1,2 +1,2 @@
 [nixpacks]
-packages = ["chromium"]
+packages = ["chromium", "chromedriver"]
