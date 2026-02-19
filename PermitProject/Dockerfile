@@ -1,11 +1,10 @@
 FROM python:3.12-slim
 
-# Install Chromium and required dependencies
+# Install dependencies for Chrome
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-driver \
-    curl \
+    wget \
     unzip \
+    curl \
     fonts-liberation \
     libnss3 \
     libatk-bridge2.0-0 \
@@ -19,6 +18,13 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Chrome for Testing (stable + deterministic)
+RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/121.0.6167.85/linux64/chrome-linux64.zip \
+    && unzip chrome-linux64.zip \
+    && mv chrome-linux64 /opt/chrome \
+    && ln -s /opt/chrome/chrome /usr/bin/chrome \
+    && rm chrome-linux64.zip
+
 WORKDIR /app
 
 COPY requirements.txt .
@@ -26,7 +32,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV CHROME_BIN=/usr/bin/chrome
 
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
