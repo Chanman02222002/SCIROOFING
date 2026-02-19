@@ -4,6 +4,7 @@ from flask import (
 )
 import os
 import random
+import shutil
 from copy import deepcopy
 from faker import Faker
 from datetime import datetime
@@ -25,6 +26,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2085,23 +2088,51 @@ def _bcpa_collect_property_data(address, city):
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
 
+    browser_candidates = [
+        os.environ.get("CHROME_BINARY"),
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium-browser"),
+        shutil.which("chromium"),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+    ]
+    browser_binary = next((path for path in browser_candidates if path and os.path.exists(path)), None)
+    if browser_binary:
+        options.binary_location = browser_binary
+
+    startup_attempts = [("selenium-manager", None)]
+    system_driver = shutil.which("chromedriver") or "/usr/bin/chromedriver"
+    if os.path.exists(system_driver):
+        startup_attempts.append(("system-chromedriver", Service(system_driver)))
+    try:
+        managed_driver = ChromeDriverManager().install()
+        startup_attempts.append(("webdriver-manager", Service(managed_driver)))
+    except Exception as exc:
+        startup_attempts = startup_attempts + [("webdriver-manager-install", exc)]
+
     driver = None
     startup_errors = []
-    try:
-        # Prefer Selenium Manager so Chrome/driver versions stay aligned.
-        driver = webdriver.Chrome(options=options)
-    except Exception as exc:
-        startup_errors.append(f"selenium-manager: {exc}")
+    for attempt_name, service_or_error in startup_attempts:
+        if isinstance(service_or_error, Exception):
+            startup_errors.append(f"{attempt_name}: {service_or_error}")
+            continue
         try:
-            # Fallback for environments that still require an explicit Service.
-            driver = webdriver.Chrome(service=Service(), options=options)
-        except Exception as fallback_exc:
-            startup_errors.append(f"service-fallback: {fallback_exc}")
+            if service_or_error is None:
+                driver = webdriver.Chrome(options=options)
+            else:
+                driver = webdriver.Chrome(service=service_or_error, options=options)
+            break
+        except Exception as exc:
+            startup_errors.append(f"{attempt_name}: {exc}")
 
     if driver is None:
         raise RuntimeError(
             "Unable to start a Chrome WebDriver session. "
             "This usually means Chrome/Chromium is missing or the installed driver is incompatible. "
+            f"Resolved browser binary: {browser_binary or 'not-found'}. "
             f"Startup errors: {' | '.join(startup_errors)}"
         )
 
@@ -2613,6 +2644,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
