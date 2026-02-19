@@ -2105,15 +2105,15 @@ def _resolve_chromedriver_binary():
 
 def create_driver():
     chrome_options = Options()
-    chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chrome")
-
+    chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(options=chrome_options)
+    
+    service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
 def _bcpa_collect_property_data(address, city):
@@ -2628,6 +2628,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
