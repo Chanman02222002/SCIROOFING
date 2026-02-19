@@ -4,7 +4,6 @@ from flask import (
 )
 import os
 import random
-import shutil
 from copy import deepcopy
 from faker import Faker
 from datetime import datetime
@@ -26,6 +25,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2083,23 +2083,12 @@ def create_driver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.binary_location = "/usr/bin/chromium"
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    chrome_path = shutil.which("chromium") or shutil.which("chromium-browser")
-    if not chrome_path:
-        raise RuntimeError("Chromium binary not found in environment")
-
-    chrome_options.binary_location = chrome_path
-
-    driver_path = shutil.which("chromedriver")
-    if not driver_path:
-        raise RuntimeError("Chromedriver not found in environment")
-
-    service = Service(driver_path)
-
-    return webdriver.Chrome(service=service, options=chrome_options)
-
+    return driver
 
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
@@ -2613,6 +2602,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
