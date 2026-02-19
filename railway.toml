@@ -1,3 +1,4 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "PermitProject/Dockerfile"
+dockerContextPath = "PermitProject"
