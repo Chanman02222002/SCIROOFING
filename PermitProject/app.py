@@ -2105,7 +2105,7 @@ def _resolve_chromedriver_binary():
 
 def create_driver():
     chrome_options = Options()
-    chrome_options.binary_location = os.environ.get("CHROME_BIN")
+    chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chrome")
 
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -2628,6 +2628,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
