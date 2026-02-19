@@ -15,8 +15,17 @@ import logging
 import pandas as pd
 import re
 import hashlib
+import base64
+import time
 import smtplib
 from email.message import EmailMessage
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -1536,15 +1545,16 @@ app.jinja_loader = DictLoader({
                 {% if broward_result %}
                   <div class="estimate-result mb-3">
                     <div class="row g-3">
+                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Ground Plane Area</div><strong>{{ '{:,.0f}'.format(broward_result.ground_area) }} sqft</strong></div></div>
                       <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Pitch</div><strong>{{ broward_result.pitch }}/12</strong></div></div>
-                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Area (sqft)</div><strong>{{ '{:,.0f}'.format(broward_result.final_area) }}</strong></div></div>
+                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Complexity</div><strong>{{ broward_result.complexity|capitalize }}</strong></div></div>
+                      <div class="col-md-6"><div class="estimate-kpi"><div class="text-muted small">Adjusted Surface</div><strong>{{ '{:,.0f}'.format(broward_result.adjusted_surface) }} sqft</strong></div></div>
+                      <div class="col-md-6"><div class="estimate-kpi"><div class="text-muted small">Final Area with Waste</div><strong>{{ '{:,.0f}'.format(broward_result.final_area) }} sqft</strong></div></div>
                       <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Squares</div><strong>{{ '%.1f'|format(broward_result.final_squares) }}</strong></div></div>
                     </div>
                   </div>
                   <div class="mb-3 small text-muted">
                     <strong>Property:</strong> {{ broward_result.address }}, {{ broward_result.city }}<br>
-                    <strong>Ground Plane:</strong> {{ '{:,.0f}'.format(broward_result.ground_area) }} sqft ·
-                    <strong>Complexity:</strong> {{ broward_result.complexity|capitalize }} ·
                     <strong>Recommended Waste:</strong> {{ broward_result.recommended_waste }}%
                   </div>
                   <div class="waste-table-wrap mb-3">
@@ -2031,8 +2041,10 @@ BROWARD_COMPLEXITY_MULTIPLIERS = {
     "moderate": 1.05,
     "complex": 1.10,
 }
-BROWARD_ESTIMATOR_ADJUSTMENT = 1.05
+BROWARD_ESTIMATOR_ADJUSTMENT = 1.03
 BROWARD_WASTE_OPTIONS = [0, 10, 12, 15, 17, 20, 22]
+BROWARD_OUTPUT_DIR = os.path.join(BASE_DIR, "bcpa_outputs")
+os.makedirs(BROWARD_OUTPUT_DIR, exist_ok=True)
 
 
 def _safe_int(value, fallback):
@@ -2049,55 +2061,128 @@ def _safe_float(value, fallback):
         return fallback
 
 
-def _fake_bcpa_ground_area(address, city):
-    seed = hashlib.md5(f"{address}|{city}".lower().encode("utf-8")).hexdigest()
-    return 1400 + (int(seed[:6], 16) % 2800)
+def _extract_total_adj_area(sketch_text):
+    match = re.search(r"Total\s+.*?\s+([\d,]+\.\d+|[\d,]+)\s*$", sketch_text, re.MULTILINE)
+    if not match:
+        raise ValueError("Could not extract Total Adj Area from BCPA sketch text.")
+    return float(match.group(1).replace(",", ""))
 
 
-def _ai_guess_pitch_complexity(address, city):
-    fallback = {"pitch": 5, "complexity": "moderate", "waste_percent": 12}
-    if not OPENAI_API_KEY:
-        return fallback
+def _extract_json_object(raw_text):
+    if not raw_text:
+        raise ValueError("OpenAI response was empty.")
+    match = re.search(r"\{.*?\}", raw_text, re.DOTALL)
+    if not match:
+        raise ValueError("OpenAI response did not contain JSON.")
+    return json.loads(match.group(0))
 
-    prompt = (
-        "You are a Broward County roof estimator assistant. "
-        "Given an address and city, provide a rough estimating guess in strict JSON only: "
-        "{\"pitch\": integer, \"complexity\": \"simple|moderate|complex\", \"waste_percent\": number}. "
-        "Use conservative assumptions for unknown details."
+
+def _bcpa_collect_property_data(address, city):
+    options = Options()
+    options.add_argument("--start-maximized")
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=options,
     )
-    user_payload = f"Address: {address}\nCity: {city}\nCounty: Broward"
+    wait = WebDriverWait(driver, 30)
 
     try:
-        request_body = json.dumps({
-            "model": "gpt-4.1-mini",
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_payload},
-            ],
-            "temperature": 0.2,
-        }).encode("utf-8")
-        request_obj = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(request_obj, timeout=15) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-        ai_text = response_data["choices"][0]["message"]["content"]
-        json_match = re.search(r"\{.*\}", ai_text, re.DOTALL)
-        parsed = json.loads(json_match.group(0)) if json_match else fallback
+        driver.get("https://web.bcpa.net/BcpaClient/#/Record-Search")
+        time.sleep(4)
+
+        addr_box = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text']")))
+        addr_box.clear()
+        addr_box.send_keys(f"{address}, {city}")
+
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#searchButton"))).click()
+        time.sleep(5)
+
+        if "Record" not in driver.current_url:
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href*='Record']"))).click()
+
+        time.sleep(3)
+        prop_img_tag = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='/Photographs/']")))
+        photo_url = prop_img_tag.get_attribute("src")
+
+        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "sketch.png")
+        existing_handles = driver.window_handles
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.btn-sketch"))).click()
+        sketch_window = list(set(driver.window_handles) - set(existing_handles))[0]
+        driver.switch_to.window(sketch_window)
+        time.sleep(3)
+        sketch_text = driver.find_element(By.TAG_NAME, "body").text
+        driver.save_screenshot(sketch_file)
+        driver.close()
+        driver.switch_to.window(existing_handles[0])
+
+        map_file = os.path.join(BROWARD_OUTPUT_DIR, "map.png")
+        existing_handles = driver.window_handles
+        wait.until(EC.element_to_be_clickable((
+            By.XPATH,
+            "//*[name()='title' and text()='Map']/ancestor::*[self::div or self::button][1]",
+        ))).click()
+        map_window = list(set(driver.window_handles) - set(existing_handles))[0]
+        driver.switch_to.window(map_window)
+        time.sleep(3)
+        driver.save_screenshot(map_file)
+        driver.close()
+        driver.switch_to.window(existing_handles[0])
+
         return {
-            "pitch": _safe_int(parsed.get("pitch"), 5),
-            "complexity": str(parsed.get("complexity", "moderate")).strip().lower(),
-            "waste_percent": _safe_float(parsed.get("waste_percent"), 12.0),
+            "photo_url": photo_url,
+            "sketch_text": sketch_text,
+            "sketch_file": sketch_file,
+            "map_file": map_file,
         }
-    except Exception:
-        logger.exception("Broward AI guess failed; using defaults")
-        return fallback
+    finally:
+        driver.quit()
+
+
+def _ask_openai_pitch_complexity_waste(photo_url, sketch_file, map_file):
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required for Broward AI Search.")
+
+    with open(sketch_file, "rb") as sketch_image:
+        sketch_b64 = base64.b64encode(sketch_image.read()).decode("utf-8")
+    with open(map_file, "rb") as map_image:
+        map_b64 = base64.b64encode(map_image.read()).decode("utf-8")
+
+    prompt = (
+        "Look at the roof and determine only these fields: pitch, complexity (simple/moderate/complex), "
+        "waste_percent. Respond strictly as JSON."
+    )
+
+    request_body = json.dumps({
+        "model": "gpt-4.1-mini",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": photo_url}},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{sketch_b64}"}},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{map_b64}"}},
+            ],
+        }],
+        "max_tokens": 300,
+    }).encode("utf-8")
+
+    request_obj = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=request_body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request_obj, timeout=60) as response:
+        response_data = json.loads(response.read().decode("utf-8"))
+    ai_text = response_data["choices"][0]["message"]["content"]
+    return _extract_json_object(ai_text)
 
 
 def generate_broward_estimate(address, city):
@@ -2108,8 +2193,13 @@ def generate_broward_estimate(address, city):
     }:
         cleaned_city = f"{cleaned_city} (Broward)" if cleaned_city else "Broward"
 
-    ground_area = _fake_bcpa_ground_area(address, cleaned_city)
-    ai_guess = _ai_guess_pitch_complexity(address, cleaned_city)
+    bcpa_data = _bcpa_collect_property_data(address, cleaned_city)
+    ground_area = _extract_total_adj_area(bcpa_data["sketch_text"])
+    ai_guess = _ask_openai_pitch_complexity_waste(
+        bcpa_data["photo_url"],
+        bcpa_data["sketch_file"],
+        bcpa_data["map_file"],
+    )
 
     pitch = _safe_int(ai_guess.get("pitch"), 5)
     complexity = str(ai_guess.get("complexity", "moderate")).lower()
@@ -2273,15 +2363,19 @@ def roof_estimator():
             if not broward_form["search_address"] or not broward_form["search_city"]:
                 flash("Please provide both address and city for Broward AI Search.")
             else:
-                broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
-                flash("Broward AI Search complete.")
-                if broward_form["result_email"]:
-                    summary = build_broward_email_summary(broward_result)
-                    subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
-                    sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary)
-                    flash(email_message)
-                    if not sent:
-                        flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL to enable email delivery.")
+                try:
+                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    flash("Broward AI Search complete.")
+                    if broward_form["result_email"]:
+                        summary = build_broward_email_summary(broward_result)
+                        subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
+                        sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary)
+                        flash(email_message)
+                        if not sent:
+                            flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL to enable email delivery.")
+                except Exception as exc:
+                    logger.exception("Broward AI Search failed")
+                    flash(f"Broward AI Search failed: {exc}")
 
         else:
             form_data = {
