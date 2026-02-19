@@ -2115,7 +2115,6 @@ def create_driver():
     service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
-
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
 
@@ -2651,6 +2650,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
