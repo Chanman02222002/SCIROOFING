@@ -25,7 +25,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2083,11 +2082,29 @@ def _bcpa_collect_property_data(address, city):
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=options,
-    )
+    driver = None
+    startup_errors = []
+    try:
+        # Prefer Selenium Manager so Chrome/driver versions stay aligned.
+        driver = webdriver.Chrome(options=options)
+    except Exception as exc:
+        startup_errors.append(f"selenium-manager: {exc}")
+        try:
+            # Fallback for environments that still require an explicit Service.
+            driver = webdriver.Chrome(service=Service(), options=options)
+        except Exception as fallback_exc:
+            startup_errors.append(f"service-fallback: {fallback_exc}")
+
+    if driver is None:
+        raise RuntimeError(
+            "Unable to start a Chrome WebDriver session. "
+            "This usually means Chrome/Chromium is missing or the installed driver is incompatible. "
+            f"Startup errors: {' | '.join(startup_errors)}"
+        )
+
     wait = WebDriverWait(driver, 30)
 
     try:
@@ -2596,6 +2613,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
