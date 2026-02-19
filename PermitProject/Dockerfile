@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN echo "fresh build"
+RUN echo "fresh build v3"
 # Install dependencies + Chromium (from apt, not manual download)
 RUN apt-get update && apt-get install -y \
     chromium \
