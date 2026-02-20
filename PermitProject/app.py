@@ -2104,17 +2104,19 @@ def _resolve_chromedriver_binary():
     return ""
 
 def create_driver():
-    chrome_options = Options()
-    chrome_options.binary_location = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_bin = os.environ.get("CHROME_BIN", "/usr/bin/chromium")
+    driver_bin = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+
+    options = Options()
+    options.binary_location = chrome_bin
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+
+    service = Service(driver_bin)
+    return webdriver.Chrome(service=service, options=options)
     
-    service = Service(os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
 
@@ -2650,6 +2652,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
