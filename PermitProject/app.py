@@ -2618,6 +2618,23 @@ def download_data(brand):
     out_path = os.path.join(BASE_DIR, f"export_{brand}.csv")
     df.to_csv(out_path, index=False)
     return send_file(out_path, as_attachment=True, download_name=f"{brand}_properties.csv")
+    
+@app.route("/_debug/bcpa/<path:filename>")
+def debug_bcpa_file(filename):
+    if not require_login():
+        abort(403)
+
+    safe_dir = os.path.abspath(BROWARD_OUTPUT_DIR)
+    full_path = os.path.abspath(os.path.join(safe_dir, filename))
+
+    # prevent path traversal
+    if not full_path.startswith(safe_dir + os.sep):
+        abort(404)
+
+    if not os.path.exists(full_path):
+        abort(404)
+
+    return send_file(full_path)
 
 @app.route("/debug-chrome")
 def debug_chrome():
@@ -2652,6 +2669,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
