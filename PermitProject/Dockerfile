@@ -29,4 +29,4 @@ COPY . .
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:8080"]
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --worker-class gthread --timeout 240 --graceful-timeout 30 --access-logfile - --error-logfile -
