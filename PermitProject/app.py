@@ -17,6 +17,7 @@ import pandas as pd
 import re
 import hashlib
 import base64
+import requests
 import time
 import smtplib
 from email.message import EmailMessage
@@ -1546,18 +1547,55 @@ app.jinja_loader = DictLoader({
                 {% if broward_result %}
                   <div class="estimate-result mb-3">
                     <div class="row g-3">
-                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Ground Plane Area</div><strong>{{ '{:,.0f}'.format(broward_result.ground_area) }} sqft</strong></div></div>
-                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Pitch</div><strong>{{ broward_result.pitch }}/12</strong></div></div>
-                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Complexity</div><strong>{{ broward_result.complexity|capitalize }}</strong></div></div>
-                      <div class="col-md-6"><div class="estimate-kpi"><div class="text-muted small">Adjusted Surface</div><strong>{{ '{:,.0f}'.format(broward_result.adjusted_surface) }} sqft</strong></div></div>
-                      <div class="col-md-6"><div class="estimate-kpi"><div class="text-muted small">Final Area with Waste</div><strong>{{ '{:,.0f}'.format(broward_result.final_area) }} sqft</strong></div></div>
-                      <div class="col-md-4"><div class="estimate-kpi"><div class="text-muted small">Squares</div><strong>{{ '%.1f'|format(broward_result.final_squares) }}</strong></div></div>
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Ground Plane Area</div>
+                          <strong>{{ '{:,.0f}'.format(broward_result.ground_area) }} sqft</strong>
+                        </div>
+                      </div>
+                
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Pitch</div>
+                          <strong>{{ broward_result.pitch }}/12</strong>
+                        </div>
+                      </div>
+                
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Complexity</div>
+                          <strong>{{ broward_result.complexity|capitalize }}</strong>
+                        </div>
+                      </div>
+                
+                      <div class="col-md-6">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Adjusted Surface</div>
+                          <strong>{{ '{:,.0f}'.format(broward_result.adjusted_surface) }} sqft</strong>
+                        </div>
+                      </div>
+                
+                      <div class="col-md-6">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Final Area with Waste</div>
+                          <strong>{{ '{:,.0f}'.format(broward_result.final_area) }} sqft</strong>
+                        </div>
+                      </div>
+                
+                      <div class="col-md-4">
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Squares</div>
+                          <strong>{{ '%.1f'|format(broward_result.final_squares) }}</strong>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                
                   <div class="mb-3 small text-muted">
                     <strong>Property:</strong> {{ broward_result.address }}, {{ broward_result.city }}<br>
                     <strong>Recommended Waste:</strong> {{ broward_result.recommended_waste }}%
                   </div>
+                
                   <div class="waste-table-wrap mb-3">
                     <table class="table waste-table align-middle">
                       <tr>
@@ -1580,25 +1618,82 @@ app.jinja_loader = DictLoader({
                       </tr>
                     </table>
                   </div>
-                  <div class="text-muted small">Broward AI Search is in beta. Validate on-site before ordering materials.</div>
+                
+                  {# ----------------- NEW: IMAGE REPORT SECTION ----------------- #}
+                  <div class="row g-3 mt-2 mb-3">
+                    {% if broward_result.report_front_image %}
+                      <div class="col-md-6">
+                        <div class="card shadow-sm h-100">
+                          <div class="card-header fw-semibold">Front Photo</div>
+                          <div class="card-body p-2">
+                            <img class="img-fluid rounded border"
+                                 style="width:100%; max-height:360px; object-fit:cover;"
+                                 src="{{ broward_result.report_front_image }}"
+                                 alt="Front photo">
+                          </div>
+                          <div class="card-footer small text-muted">
+                            Same image bytes sent to AI (embedded).
+                          </div>
+                        </div>
+                      </div>
+                    {% endif %}
+                
+                    {% if broward_result.report_sketch_image %}
+                      <div class="col-md-6">
+                        <div class="card shadow-sm h-100">
+                          <div class="card-header fw-semibold">BCPA Sketch</div>
+                          <div class="card-body p-2">
+                            <img class="img-fluid rounded border"
+                                 style="width:100%; max-height:360px; object-fit:contain; background:#f8f9fa;"
+                                 src="{{ broward_result.report_sketch_image }}"
+                                 alt="Sketch screenshot">
+                          </div>
+                          <div class="card-footer small text-muted">
+                            Same image bytes sent to AI (embedded).
+                          </div>
+                        </div>
+                      </div>
+                    {% endif %}
+                  </div>
+                
+                  <div class="text-muted small">
+                    Broward AI Search is in beta. Validate on-site before ordering materials.
+                  </div>
+                
                 {% elif estimate %}
                   <div class="estimate-result mb-4">
                     <div class="row g-3">
                       <div class="col-md-4">
-                        <div class="estimate-kpi"><div class="text-muted small">Estimated Range</div><strong>{{ estimate.range }}</strong></div>
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Estimated Range</div>
+                          <strong>{{ estimate.range }}</strong>
+                        </div>
                       </div>
                       <div class="col-md-4">
-                        <div class="estimate-kpi"><div class="text-muted small">Base Cost / Sq Ft</div><strong>{{ estimate.rate }}</strong></div>
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Base Cost / Sq Ft</div>
+                          <strong>{{ estimate.rate }}</strong>
+                        </div>
                       </div>
                       <div class="col-md-4">
-                        <div class="estimate-kpi"><div class="text-muted small">Confidence</div><strong>{{ estimate.confidence }}</strong></div>
+                        <div class="estimate-kpi">
+                          <div class="text-muted small">Confidence</div>
+                          <strong>{{ estimate.confidence }}</strong>
+                        </div>
                       </div>
                     </div>
                   </div>
+                
                   <div class="mb-3">{{ estimate.summary | safe }}</div>
-                  <div class="text-muted small">This estimate is informational and should be validated with a site inspection.</div>
+                  <div class="text-muted small">
+                    This estimate is informational and should be validated with a site inspection.
+                  </div>
+                
                 {% else %}
-                  <div class="text-muted mb-4">Generate a standard estimate or run Broward AI Search to see polished results here.</div>
+                  <div class="text-muted mb-4">
+                    Generate a standard estimate or run Broward AI Search to see polished results here.
+                  </div>
+                
                   <div class="estimate-result">
                     <h6 class="mb-2">What you will get</h6>
                     <ul class="mb-0 text-muted">
@@ -2219,6 +2314,10 @@ def _ask_openai_pitch_complexity_waste(photo_url, sketch_file, map_file):
 
 
 def generate_broward_estimate(address, city):
+    import os
+    import base64
+    import requests
+
     cleaned_city = city.strip()
     if "broward" not in cleaned_city.lower() and cleaned_city.lower() not in {
         "fort lauderdale", "hollywood", "pompano beach", "coral springs", "sunrise", "weston", "davie",
@@ -2228,9 +2327,55 @@ def generate_broward_estimate(address, city):
 
     bcpa_data = _bcpa_collect_property_data(address, cleaned_city)
     ground_area = _extract_total_adj_area(bcpa_data["sketch_text"])
+
+    # ---------------- BUILD EMBEDDED IMAGES (NO LOCAL SAVE) ----------------
+    photo_url = bcpa_data.get("photo_url", "")
+    photo_data_uri = ""
+    sketch_data_uri = ""
+
+    # Front photo: fetch into memory and convert to data URI
+    # This makes it possible to (a) display in report and (b) send identical bytes to OpenAI
+    photo_ok = False
+    photo_bytes = 0
+    try:
+        if photo_url and (photo_url.startswith("http://") or photo_url.startswith("https://")):
+            r = requests.get(photo_url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            photo_bytes = len(r.content)
+            b64 = base64.b64encode(r.content).decode("utf-8")
+            # Usually jpeg; even if not, most browsers still render. (Optional: sniff content-type if you want.)
+            photo_data_uri = f"data:image/jpeg;base64,{b64}"
+            photo_ok = True
+    except Exception:
+        photo_ok = False
+        photo_data_uri = ""
+
+    # Sketch: you already saved this screenshot to disk, so embed it
+    sketch_ok = False
+    sketch_bytes = 0
+    try:
+        sketch_path = bcpa_data.get("sketch_file", "")
+        if sketch_path and os.path.exists(sketch_path):
+            with open(sketch_path, "rb") as f:
+                blob = f.read()
+            sketch_bytes = len(blob)
+            b64 = base64.b64encode(blob).decode("utf-8")
+            sketch_data_uri = f"data:image/png;base64,{b64}"
+            sketch_ok = True
+    except Exception:
+        sketch_ok = False
+        sketch_data_uri = ""
+
+    # Map: keep as file for OpenAI (already used today); also track health
+    map_ok = os.path.exists(bcpa_data.get("map_file", "")) if bcpa_data.get("map_file") else False
+    map_bytes = os.path.getsize(bcpa_data["map_file"]) if map_ok else 0
+
+    # ---------------- GPT (SEND SAME BYTES YOU SHOW IN REPORT) ----------------
+    # IMPORTANT: update _ask_openai_pitch_complexity_waste to accept data URIs
+    # If you haven't updated it yet, see note below.
     ai_guess = _ask_openai_pitch_complexity_waste(
-        bcpa_data["photo_url"],
-        bcpa_data["sketch_file"],
+        photo_data_uri,     # used to be bcpa_data["photo_url"]
+        sketch_data_uri,    # used to be bcpa_data["sketch_file"]
         bcpa_data["map_file"],
     )
 
@@ -2257,16 +2402,10 @@ def generate_broward_estimate(address, city):
         })
 
     # ---------------- DEBUG: verify image capture ----------------
-    sketch_ok = os.path.exists(bcpa_data.get("sketch_file", "")) if bcpa_data.get("sketch_file") else False
-    map_ok = os.path.exists(bcpa_data.get("map_file", "")) if bcpa_data.get("map_file") else False
-    photo_url = bcpa_data.get("photo_url", "")
-    photo_ok = bool(photo_url) and (photo_url.startswith("http://") or photo_url.startswith("https://"))
-    sketch_bytes = os.path.getsize(bcpa_data["sketch_file"]) if sketch_ok else 0
-    map_bytes = os.path.getsize(bcpa_data["map_file"]) if map_ok else 0
-    
     debug_images = {
         "photo_ok": photo_ok,
         "photo_url": photo_url,
+        "photo_bytes": photo_bytes,
         "sketch_ok": sketch_ok,
         "sketch_file": bcpa_data.get("sketch_file", ""),
         "sketch_bytes": sketch_bytes,
@@ -2274,7 +2413,7 @@ def generate_broward_estimate(address, city):
         "map_file": bcpa_data.get("map_file", ""),
         "map_bytes": map_bytes,
     }
-    
+
     return {
         "address": address,
         "city": cleaned_city,
@@ -2286,6 +2425,11 @@ def generate_broward_estimate(address, city):
         "final_area": round(final_area, 0),
         "final_squares": round(final_squares, 1),
         "waste_breakdown": waste_breakdown,
+
+        # For showing on the report page (aesthetic evidence they were collected)
+        "report_front_image": photo_data_uri,
+        "report_sketch_image": sketch_data_uri,
+
         "debug_images": debug_images,
     }
 
@@ -2686,6 +2830,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
