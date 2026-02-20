@@ -2256,6 +2256,25 @@ def generate_broward_estimate(address, city):
             "recommended": abs(option - waste_percent) < 1.1,
         })
 
+    # ---------------- DEBUG: verify image capture ----------------
+    sketch_ok = os.path.exists(bcpa_data.get("sketch_file", "")) if bcpa_data.get("sketch_file") else False
+    map_ok = os.path.exists(bcpa_data.get("map_file", "")) if bcpa_data.get("map_file") else False
+    photo_url = bcpa_data.get("photo_url", "")
+    photo_ok = bool(photo_url) and (photo_url.startswith("http://") or photo_url.startswith("https://"))
+    sketch_bytes = os.path.getsize(bcpa_data["sketch_file"]) if sketch_ok else 0
+    map_bytes = os.path.getsize(bcpa_data["map_file"]) if map_ok else 0
+    
+    debug_images = {
+        "photo_ok": photo_ok,
+        "photo_url": photo_url,
+        "sketch_ok": sketch_ok,
+        "sketch_file": bcpa_data.get("sketch_file", ""),
+        "sketch_bytes": sketch_bytes,
+        "map_ok": map_ok,
+        "map_file": bcpa_data.get("map_file", ""),
+        "map_bytes": map_bytes,
+    }
+    
     return {
         "address": address,
         "city": cleaned_city,
@@ -2267,6 +2286,7 @@ def generate_broward_estimate(address, city):
         "final_area": round(final_area, 0),
         "final_squares": round(final_squares, 1),
         "waste_breakdown": waste_breakdown,
+        "debug_images": debug_images,
     }
 
 
@@ -2399,6 +2419,16 @@ def roof_estimator():
                 try:
                     broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
                     flash("Broward AI Search complete.")
+                    try:
+                        dbg = broward_result.get("debug_images") or {}
+                        sketch_note = "OK" if dbg.get("sketch_ok") else "MISSING"
+                        map_note = "OK" if dbg.get("map_ok") else "MISSING"
+                        photo_note = "OK" if dbg.get("photo_ok") else "MISSING"
+                        sketch_kb = round((dbg.get("sketch_bytes", 0) or 0) / 1024, 1)
+                        map_kb = round((dbg.get("map_bytes", 0) or 0) / 1024, 1)
+                        flash(f"Image capture: Photo={photo_note} | Sketch={sketch_note} ({sketch_kb} KB) | Map={map_note} ({map_kb} KB)")
+                    except Exception:
+                        pass
                     if broward_form["result_email"]:
                         summary = build_broward_email_summary(broward_result)
                         subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
@@ -2656,6 +2686,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
