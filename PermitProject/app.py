@@ -2619,7 +2619,9 @@ def download_data(brand):
     df.to_csv(out_path, index=False)
     return send_file(out_path, as_attachment=True, download_name=f"{brand}_properties.csv")
     
-
+@app.get("/health")
+def health():
+    return {"ok": True}, 200
 
 @app.route("/debug-chrome")
 def debug_chrome():
@@ -2654,6 +2656,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
