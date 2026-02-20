@@ -5,5 +5,6 @@ faker==25.9.1
 gunicorn==23.0.0
 jinja2==3.1.4
 selenium==4.28.1
+requests>=2.31.0
 
 
