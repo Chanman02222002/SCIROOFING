@@ -2270,30 +2270,82 @@ def _bcpa_collect_property_data(address, city):
         driver.quit()
 
 
-def _ask_openai_pitch_complexity_waste(photo_url, sketch_file, map_file):
+def _ask_openai_pitch_complexity_waste(photo_input, sketch_input, map_file):
+    import os
+    import json
+    import base64
+    import urllib.request
+
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY is required for Broward AI Search.")
 
-    with open(sketch_file, "rb") as sketch_image:
-        sketch_b64 = base64.b64encode(sketch_image.read()).decode("utf-8")
-    with open(map_file, "rb") as map_image:
-        map_b64 = base64.b64encode(map_image.read()).decode("utf-8")
+    def _to_data_uri_png_from_file(path: str) -> str:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        return f"data:image/png;base64,{b64}"
+
+    def _as_image_url_obj(value: str, fallback_mime: str = "image/jpeg"):
+        """
+        Returns {"type":"image_url","image_url":{"url":...}}.
+        If value is already a data URI, pass it through.
+        If value is a URL, pass it through.
+        If value is a file path, convert to a data URI (png by default).
+        """
+        if not value:
+            return None
+
+        v = str(value).strip()
+
+        # data URI already
+        if v.startswith("data:image/"):
+            return {"type": "image_url", "image_url": {"url": v}}
+
+        # remote URL
+        if v.startswith("http://") or v.startswith("https://"):
+            return {"type": "image_url", "image_url": {"url": v}}
+
+        # local file path
+        if os.path.exists(v):
+            # Assume png for local screenshot files
+            return {"type": "image_url", "image_url": {"url": _to_data_uri_png_from_file(v)}}
+
+        # unknown / missing
+        return None
+
+    # Map is always a file path in your flow
+    map_part = _as_image_url_obj(map_file)
+    if map_part is None:
+        raise RuntimeError("Map image missing/unreadable; cannot run Broward AI Search.")
+
+    # Photo can be URL or data URI (or file path if you choose later)
+    photo_part = _as_image_url_obj(photo_input)
+    # Sketch can be file path OR data URI
+    sketch_part = _as_image_url_obj(sketch_input)
 
     prompt = (
-        "Look at the roof and determine only these fields: pitch, complexity (simple/moderate/complex), "
-        "waste_percent. Respond strictly as JSON."
+        "You are estimating a residential roof.\n"
+        "Use the provided images (front photo, sketch, map) to determine ONLY:\n"
+        "1) pitch (integer, e.g., 2 means 2/12)\n"
+        "2) complexity (one of: simple, moderate, complex)\n"
+        "3) waste_percent (number)\n"
+        "Respond strictly as JSON with keys: pitch, complexity, waste_percent.\n"
+        "If an image is missing/unreadable, still respond with your best estimate and include a key notes explaining what was missing."
     )
+
+    content = [{"type": "text", "text": prompt}]
+
+    # Keep consistent ordering
+    if photo_part:
+        content.append(photo_part)
+    if sketch_part:
+        content.append(sketch_part)
+    content.append(map_part)
 
     request_body = json.dumps({
         "model": "gpt-4.1-mini",
         "messages": [{
             "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": photo_url}},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{sketch_b64}"}},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{map_b64}"}},
-            ],
+            "content": content,
         }],
         "max_tokens": 300,
     }).encode("utf-8")
@@ -2307,8 +2359,10 @@ def _ask_openai_pitch_complexity_waste(photo_url, sketch_file, map_file):
         },
         method="POST",
     )
+
     with urllib.request.urlopen(request_obj, timeout=60) as response:
         response_data = json.loads(response.read().decode("utf-8"))
+
     ai_text = response_data["choices"][0]["message"]["content"]
     return _extract_json_object(ai_text)
 
@@ -2830,6 +2884,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
