@@ -2042,7 +2042,7 @@ BROWARD_COMPLEXITY_MULTIPLIERS = {
     "moderate": 1.05,
     "complex": 1.10,
 }
-BROWARD_ESTIMATOR_ADJUSTMENT = 1.03
+BROWARD_ESTIMATOR_ADJUSTMENT = 1.06
 BROWARD_WASTE_OPTIONS = [0, 10, 12, 15, 17, 20, 22]
 BROWARD_OUTPUT_DIR = os.path.join(BASE_DIR, "bcpa_outputs")
 os.makedirs(BROWARD_OUTPUT_DIR, exist_ok=True)
@@ -2656,6 +2656,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
