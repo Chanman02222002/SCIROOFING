@@ -41,11 +41,11 @@ if not logger.handlers:
 
 fake = Faker("en_US")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.sendgrid.net")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME or "")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "chandlerhoffman497@gmail.com")
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -1529,10 +1529,6 @@ app.jinja_loader = DictLoader({
                     </div>
                     <div class="form-text" id="city-preview">{{ broward_query or 'Address, City will appear here' }}</div>
                   </div>
-                  <div>
-                    <label class="form-label">Email Result To (optional)</label>
-                    <input type="email" name="result_email" class="form-control" placeholder="estimates@company.com" value="{{ broward_form.result_email or '' }}">
-                  </div>
                   <button class="btn btn-dark btn-lg">Run Broward AI Search</button>
                 </form>
               </div>
@@ -1659,6 +1655,19 @@ app.jinja_loader = DictLoader({
                   <div class="text-muted small">
                     Broward AI Search is in beta. Validate on-site before ordering materials.
                   </div>
+
+                  <hr class="my-4">
+
+                  <form method="post" class="vstack gap-2 estimator-form" data-loading-message="Sending estimate email...">
+                    <input type="hidden" name="action" value="broward_ai_search">
+                    <input type="hidden" name="search_address" value="{{ broward_result.address }}">
+                    <input type="hidden" name="search_city" value="{{ broward_result.city }}">
+                    <div>
+                      <label class="form-label">Email This Result To</label>
+                      <input type="email" name="result_email" class="form-control" placeholder="estimates@company.com" value="{{ broward_form.result_email or '' }}" required>
+                    </div>
+                    <button class="btn btn-outline-primary">Send Result Email</button>
+                  </form>
                 
                 {% elif estimate %}
                   <div class="estimate-result mb-4">
@@ -2884,6 +2893,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
