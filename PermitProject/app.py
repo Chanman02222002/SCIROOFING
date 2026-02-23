@@ -2254,7 +2254,25 @@ def _bcpa_collect_property_data(address, city):
         driver.switch_to.window(sketch_window)
         time.sleep(3)
         sketch_text = driver.find_element(By.TAG_NAME, "body").text
-        driver.save_screenshot(sketch_file)
+        # ---- FULL PAGE SCREENSHOT (Headless Safe) ----
+        metrics = driver.execute_cdp_cmd("Page.getLayoutMetrics", {})
+        width = metrics["contentSize"]["width"]
+        height = metrics["contentSize"]["height"]
+        
+        screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
+            "format": "png",
+            "clip": {
+                "x": 0,
+                "y": 0,
+                "width": width,
+                "height": height,
+                "scale": 1
+            }
+        })
+        
+        with open(sketch_file, "wb") as f:
+            f.write(base64.b64decode(screenshot["data"]))
+        # ----------------------------------------------
         driver.close()
         driver.switch_to.window(existing_handles[0])
 
@@ -2994,6 +3012,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
