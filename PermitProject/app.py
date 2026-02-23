@@ -1660,6 +1660,69 @@ app.jinja_loader = DictLoader({
 
                   <hr class="my-4">
 
+                  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                    <h5 class="mb-0">SCI Pricing Add-On</h5>
+                    <button class="btn btn-outline-success" type="button" id="add-pricing-toggle">Add Pricing</button>
+                  </div>
+                  <div class="text-muted small mb-3">Add access level + material to convert AI quantity into an operations-ready contract estimate.</div>
+
+                  <div id="add-pricing-panel" class="{% if not pricing_result %}d-none{% endif %}">
+                    <form method="post" class="vstack gap-3 estimator-form" data-loading-message="Calculating SCI pricing...">
+                      <input type="hidden" name="action" value="add_pricing">
+                      <input type="hidden" name="search_address" value="{{ broward_result.address }}">
+                      <input type="hidden" name="search_city" value="{{ broward_result.city }}">
+                      <div class="row g-3">
+                        <div class="col-md-6">
+                          <label class="form-label">Floor Level / Access</label>
+                          <select name="access_level" class="form-select" required>
+                            <option value="" disabled {% if not pricing_form.access_level %}selected{% endif %}>Select access</option>
+                            <option value="ground" {% if pricing_form.access_level == 'ground' %}selected{% endif %}>Ground / Single Story</option>
+                            <option value="2_story" {% if pricing_form.access_level == '2_story' %}selected{% endif %}>Second Story / Two Story</option>
+                            <option value="3_plus" {% if pricing_form.access_level == '3_plus' %}selected{% endif %}>Third Story+ / Difficult Access</option>
+                          </select>
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label">Material</label>
+                          <select name="pricing_material" class="form-select" required>
+                            <option value="" disabled {% if not pricing_form.material %}selected{% endif %}>Select material</option>
+                            <option value="shingle" {% if pricing_form.material == 'shingle' %}selected{% endif %}>Shingle</option>
+                            <option value="tile" {% if pricing_form.material == 'tile' %}selected{% endif %}>Tile</option>
+                            <option value="metal" {% if pricing_form.material == 'metal' %}selected{% endif %}>Metal</option>
+                          </select>
+                        </div>
+                      </div>
+                      <button class="btn btn-success">Calculate SCI Pricing Estimate</button>
+                    </form>
+                  </div>
+
+                  {% if pricing_result %}
+                    <div class="estimate-result mt-3">
+                      <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                          <div class="estimate-kpi">
+                            <div class="text-muted small">Material Baseline</div>
+                            <strong>{{ '${:,.0f}'.format(pricing_result.baseline_material) }}</strong>
+                          </div>
+                        </div>
+                        <div class="col-md-4">
+                          <div class="estimate-kpi">
+                            <div class="text-muted small">Price / Square</div>
+                            <strong>{{ '${:,.2f}'.format(pricing_result.price_per_square) }}</strong>
+                          </div>
+                        </div>
+                        <div class="col-md-4">
+                          <div class="estimate-kpi">
+                            <div class="text-muted small">Estimated Total</div>
+                            <strong>{{ '${:,.0f}'.format(pricing_result.estimated_total) }}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      <div>{{ pricing_result.summary | safe }}</div>
+                    </div>
+                  {% endif %}
+
+                  <hr class="my-4">
+
                   <form method="post" class="vstack gap-2 estimator-form" data-loading-message="Sending estimate email...">
                     <input type="hidden" name="action" value="broward_ai_search">
                     <input type="hidden" name="search_address" value="{{ broward_result.address }}">
@@ -1750,6 +1813,14 @@ app.jinja_loader = DictLoader({
               const address = addressInput.value.trim();
               const city = cityInput.value.trim();
               cityPreview.textContent = (address && city) ? `${address}, ${city}` : (city || 'Address, City will appear here');
+            });
+          }
+
+          const addPricingBtn = document.getElementById('add-pricing-toggle');
+          const addPricingPanel = document.getElementById('add-pricing-panel');
+          if (addPricingBtn && addPricingPanel) {
+            addPricingBtn.addEventListener('click', () => {
+              addPricingPanel.classList.toggle('d-none');
             });
           }
         })();
@@ -2074,6 +2145,62 @@ def calculate_estimate_inputs(payload):
 def format_currency(value):
     return f"${value:,.0f}"
 
+
+SCI_MATERIAL_PRICE_PER_SQUARE = {
+    "shingle": 394.31,
+    "tile": 556.94,
+    "metal": 612.00,
+}
+
+SCI_ACCESS_MULTIPLIERS = {
+    "ground": 1.00,
+    "2_story": 1.10,
+    "3_plus": 1.20,
+}
+
+
+def generate_sci_pricing_estimate(payload):
+    material_key = payload.get("material", "").strip().lower()
+    access_key = payload.get("access_level", "").strip().lower()
+    squares = max(float(payload.get("squares", 0) or 0), 0.1)
+
+    price_per_square = SCI_MATERIAL_PRICE_PER_SQUARE.get(material_key, SCI_MATERIAL_PRICE_PER_SQUARE["shingle"])
+    access_multiplier = SCI_ACCESS_MULTIPLIERS.get(access_key, 1.0)
+
+    baseline_material = squares * price_per_square
+    labor_and_install = baseline_material * 0.42
+    access_adjustment = (baseline_material + labor_and_install) * (access_multiplier - 1)
+    overhead_and_margin = (baseline_material + labor_and_install + access_adjustment) * 0.18
+    estimated_total = baseline_material + labor_and_install + access_adjustment + overhead_and_margin
+
+    access_labels = {
+        "ground": "Ground / single-story access",
+        "2_story": "Second-floor / two-story access",
+        "3_plus": "Third-floor+ / difficult access",
+    }
+
+    summary = (
+        f"<p><strong>SCI Pricing Build:</strong> {squares:.1f} squares × ${price_per_square:,.2f}/sq "
+        f"for {material_key.capitalize()} = <strong>{format_currency(baseline_material)}</strong> baseline material cost.</p>"
+        "<ul>"
+        f"<li>Material baseline (SCI sheet-derived): <strong>{format_currency(baseline_material)}</strong>.</li>"
+        f"<li>Labor + install loading (42%): <strong>{format_currency(labor_and_install)}</strong>.</li>"
+        f"<li>Access multiplier ({access_multiplier:.2f} - {access_labels.get(access_key, 'Standard access')}): <strong>{format_currency(access_adjustment)}</strong>.</li>"
+        f"<li>Overhead + margin (18%): <strong>{format_currency(overhead_and_margin)}</strong>.</li>"
+        "</ul>"
+        f"<p><strong>Estimated Contract Price:</strong> {format_currency(estimated_total)}.</p>"
+        "<p class='mb-0 text-muted small'>This is a directional estimator for operations handoff and should be field-verified before final contract execution.</p>"
+    )
+
+    return {
+        "material": material_key.capitalize(),
+        "access_level": access_labels.get(access_key, "Standard access"),
+        "squares": round(squares, 1),
+        "price_per_square": price_per_square,
+        "baseline_material": round(baseline_material, 0),
+        "estimated_total": round(estimated_total, 0),
+        "summary": summary,
+    }
 def generate_estimate(payload):
     estimate_inputs = calculate_estimate_inputs(payload)
     base_min, base_max = estimate_inputs["base_rate"]
@@ -2727,7 +2854,11 @@ def roof_estimator():
     estimate = None
     broward_result = None
     broward_query = ""
-
+    pricing_result = None
+    pricing_form = {
+        "access_level": "",
+        "material": "",
+    }
     if request.method == "POST":
         action = request.form.get("action", "standard_estimate").strip()
 
@@ -2765,6 +2896,39 @@ def roof_estimator():
                     logger.exception("Broward AI Search failed")
                     flash(f"Broward AI Search failed: {exc}")
 
+        elif action == "add_pricing":
+            broward_form = {
+                "search_address": request.form.get("search_address", "").strip(),
+                "search_city": request.form.get("search_city", "").strip(),
+                "result_email": "",
+            }
+            pricing_form = {
+                "access_level": request.form.get("access_level", "").strip(),
+                "material": request.form.get("pricing_material", "").strip().lower(),
+            }
+            broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
+
+            if not broward_form["search_address"] or not broward_form["search_city"]:
+                flash("Please run Broward AI Search first so we can pull the roof quantity.")
+            elif not pricing_form["access_level"] or not pricing_form["material"]:
+                flash("Please choose both floor level/access and material.")
+                try:
+                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                except Exception:
+                    broward_result = None
+            else:
+                try:
+                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    pricing_result = generate_sci_pricing_estimate({
+                        "squares": broward_result.get("final_squares", 0),
+                        "material": pricing_form["material"],
+                        "access_level": pricing_form["access_level"],
+                    })
+                    flash("SCI pricing estimate generated.")
+                except Exception as exc:
+                    logger.exception("SCI pricing estimate failed")
+                    flash(f"SCI pricing estimate failed: {exc}")
+
         else:
             form_data = {
                 "project_type": request.form.get("project_type", "").strip(),
@@ -2797,6 +2961,8 @@ def roof_estimator():
         estimate=estimate,
         broward_result=broward_result,
         broward_query=broward_query,
+        pricing_result=pricing_result,
+        pricing_form=pricing_form,
         body_class="estimator-page",
     )
 @app.route("/dashboard")
@@ -3011,6 +3177,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
