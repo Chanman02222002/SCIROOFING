@@ -1727,6 +1727,10 @@ app.jinja_loader = DictLoader({
                     <input type="hidden" name="action" value="broward_ai_search">
                     <input type="hidden" name="search_address" value="{{ broward_result.address }}">
                     <input type="hidden" name="search_city" value="{{ broward_result.city }}">
+                    {% if pricing_result %}
+                      <input type="hidden" name="pricing_material" value="{{ pricing_form.material }}">
+                      <input type="hidden" name="access_level" value="{{ pricing_form.access_level }}">
+                    {% endif %}
                     <div>
                       <label class="form-label">Email This Result To</label>
                       <input type="email" name="result_email" class="form-control" placeholder="estimates@company.com" value="{{ broward_form.result_email or '' }}" required>
@@ -2672,6 +2676,23 @@ def build_broward_email_summary(result):
     return "\n".join(lines)
 
 
+def build_pricing_email_summary(pricing_result):
+    if not pricing_result:
+        return ""
+
+    lines = [
+        "",
+        "SCI Pricing Add-On:",
+        f"- Material: {pricing_result.get('material', 'N/A')}",
+        f"- Access Level: {pricing_result.get('access_level', 'N/A')}",
+        f"- Roof Quantity: {pricing_result.get('squares', 0)} squares",
+        f"- Price / Square: ${pricing_result.get('price_per_square', 0):,.2f}",
+        f"- Material Baseline: ${pricing_result.get('baseline_material', 0):,.0f}",
+        f"- Estimated Contract Price: ${pricing_result.get('estimated_total', 0):,.0f}",
+    ]
+    return "\n".join(lines)
+
+
 def _decode_data_uri_image(data_uri):
     value = (data_uri or "").strip()
     if not value.startswith("data:image/") or "," not in value:
@@ -2691,7 +2712,7 @@ def _decode_data_uri_image(data_uri):
         return None
 
 
-def build_broward_email_html(result):
+def build_broward_email_html(result, pricing_result=None):
     address = html.escape(result.get("address", ""))
     city = html.escape(result.get("city", ""))
     complexity = html.escape(str(result.get("complexity", "")).capitalize())
@@ -2705,6 +2726,40 @@ def build_broward_email_html(result):
             f"<td style='padding:6px 10px; border:1px solid #d9d9d9;'>{row.get('squares', 0)} squares</td>"
             "</tr>"
         )
+
+    pricing_html = ""
+    if pricing_result:
+        pricing_html = f"""
+    <h4 style=\"margin-bottom: 8px;\">SCI Pricing Add-On</h4>
+    <table style=\"border-collapse: collapse; margin-bottom: 16px; min-width: 420px;\">
+      <tbody>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Material</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\">{html.escape(str(pricing_result.get('material', 'N/A')))}</td>
+        </tr>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Access Level</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\">{html.escape(str(pricing_result.get('access_level', 'N/A')))}</td>
+        </tr>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Roof Quantity</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\">{pricing_result.get('squares', 0)} squares</td>
+        </tr>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Price / Square</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\">${pricing_result.get('price_per_square', 0):,.2f}</td>
+        </tr>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Material Baseline</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\">${pricing_result.get('baseline_material', 0):,.0f}</td>
+        </tr>
+        <tr>
+          <th style=\"padding:6px 10px; border:1px solid #d9d9d9; text-align:left; background:#f8f9fa;\">Estimated Contract Price</th>
+          <td style=\"padding:6px 10px; border:1px solid #d9d9d9;\"><strong>${pricing_result.get('estimated_total', 0):,.0f}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+"""
 
     return f"""
 <html>
@@ -2735,6 +2790,8 @@ def build_broward_email_html(result):
       </tbody>
     </table>
 
+    {pricing_html}
+
     <h4 style="margin-bottom: 8px;">Report Images</h4>
     <p style="margin: 0 0 8px 0;">Front Photo</p>
     <img src="cid:front-photo" alt="Front photo" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; margin-bottom:14px;">
@@ -2748,7 +2805,7 @@ def build_broward_email_html(result):
 """
 
 
-def send_estimate_email(recipient, subject, body, result=None):
+def send_estimate_email(recipient, subject, body, result=None, pricing_result=None):
     if not (SMTP_HOST and SMTP_FROM_EMAIL):
         return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL (or SENDGRID_FROM_EMAIL) to enable outbound emails."
 
@@ -2769,7 +2826,7 @@ def send_estimate_email(recipient, subject, body, result=None):
                 inline_images.append(("bcpa-sketch", sketch_image))
 
             if inline_images:
-                msg.add_alternative(build_broward_email_html(result), subtype="html")
+                msg.add_alternative(build_broward_email_html(result, pricing_result), subtype="html")
                 html_part = msg.get_payload()[-1]
                 for cid, image_data in inline_images:
                     maintype, subtype = image_data["mime"].split("/", 1)
@@ -2868,12 +2925,22 @@ def roof_estimator():
                 "search_city": request.form.get("search_city", "").strip(),
                 "result_email": request.form.get("result_email", "").strip(),
             }
+            pricing_form = {
+                "access_level": request.form.get("access_level", "").strip(),
+                "material": request.form.get("pricing_material", "").strip().lower(),
+            }
             broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
             if not broward_form["search_address"] or not broward_form["search_city"]:
                 flash("Please provide both address and city for Broward AI Search.")
             else:
                 try:
                     broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    if pricing_form["access_level"] and pricing_form["material"]:
+                        pricing_result = generate_sci_pricing_estimate({
+                            "squares": broward_result.get("final_squares", 0),
+                            "material": pricing_form["material"],
+                            "access_level": pricing_form["access_level"],
+                        })
                     flash("Broward AI Search complete.")
                     try:
                         dbg = broward_result.get("debug_images") or {}
@@ -2886,9 +2953,15 @@ def roof_estimator():
                     except Exception:
                         pass
                     if broward_form["result_email"]:
-                        summary = build_broward_email_summary(broward_result)
+                        summary = build_broward_email_summary(broward_result) + build_pricing_email_summary(pricing_result)
                         subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
-                        sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary, broward_result)
+                        sent, email_message = send_estimate_email(
+                            broward_form["result_email"],
+                            subject,
+                            summary,
+                            broward_result,
+                            pricing_result,
+                        )
                         flash(email_message)
                         if not sent:
                             flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL and SMTP credentials (or SENDGRID_API_KEY) to enable email delivery.")
@@ -3177,6 +3250,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
