@@ -46,7 +46,7 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "apikey" if SENDGRID_API_KEY else "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", SENDGRID_API_KEY)
-SMTP_FROM_EMAIL = "chandlerhoffman497@gmail.com"
+SMTP_FROM_EMAIL = "chandler@floridasalesleads.com"
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -2894,6 +2894,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
