@@ -43,9 +43,10 @@ fake = Faker("en_US")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.sendgrid.net")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", "chandlerhoffman497@gmail.com")
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "apikey" if SENDGRID_API_KEY else "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", SENDGRID_API_KEY)
+SMTP_FROM_EMAIL = "chandlerhoffman497@gmail.com"
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -2528,7 +2529,7 @@ def build_broward_email_summary(result):
 
 def send_estimate_email(recipient, subject, body):
     if not (SMTP_HOST and SMTP_FROM_EMAIL):
-        return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL to enable outbound emails."
+        return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL (or SENDGRID_FROM_EMAIL) to enable outbound emails."
 
     try:
         msg = EmailMessage()
@@ -2642,7 +2643,7 @@ def roof_estimator():
                         sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary)
                         flash(email_message)
                         if not sent:
-                            flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL to enable email delivery.")
+                            flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL and SMTP credentials (or SENDGRID_API_KEY) to enable email delivery.")
                 except Exception as exc:
                     logger.exception("Broward AI Search failed")
                     flash(f"Broward AI Search failed: {exc}")
@@ -2893,6 +2894,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
