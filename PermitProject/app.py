@@ -2254,25 +2254,24 @@ def _bcpa_collect_property_data(address, city):
         driver.switch_to.window(sketch_window)
         time.sleep(3)
         sketch_text = driver.find_element(By.TAG_NAME, "body").text
-        # ---- FULL PAGE SCREENSHOT (Headless Safe) ----
-        metrics = driver.execute_cdp_cmd("Page.getLayoutMetrics", {})
-        width = metrics["contentSize"]["width"]
-        height = metrics["contentSize"]["height"]
+        # ---- FORCE FULL SKETCH VISIBILITY ----
+
+        # Scroll to bottom so entire sketch renders
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
         
-        screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
-            "format": "png",
-            "clip": {
-                "x": 0,
-                "y": 0,
-                "width": width,
-                "height": height,
-                "scale": 1
-            }
-        })
+        # Get actual rendered dimensions
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        total_width = driver.execute_script("return document.body.scrollWidth")
         
-        with open(sketch_file, "wb") as f:
-            f.write(base64.b64decode(screenshot["data"]))
-        # ----------------------------------------------
+        # Resize browser window to fit entire sketch
+        driver.set_window_size(total_width + 200, total_height + 200)
+        time.sleep(1)
+        
+        # Now take screenshot (will include bottom portion)
+        driver.save_screenshot(sketch_file)
+        
+        # --------------------------------------
         driver.close()
         driver.switch_to.window(existing_handles[0])
 
@@ -3012,6 +3011,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
