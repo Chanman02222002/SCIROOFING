@@ -17,6 +17,7 @@ import pandas as pd
 import re
 import hashlib
 import base64
+import html
 import requests
 import time
 import smtplib
@@ -2527,7 +2528,83 @@ def build_broward_email_summary(result):
     return "\n".join(lines)
 
 
-def send_estimate_email(recipient, subject, body):
+def _decode_data_uri_image(data_uri):
+    value = (data_uri or "").strip()
+    if not value.startswith("data:image/") or "," not in value:
+        return None
+
+    header, payload = value.split(",", 1)
+    mime = header[5:].split(";", 1)[0].strip().lower()
+    if not mime.startswith("image/"):
+        return None
+
+    try:
+        return {
+            "mime": mime,
+            "bytes": base64.b64decode(payload),
+        }
+    except Exception:
+        return None
+
+
+def build_broward_email_html(result):
+    address = html.escape(result.get("address", ""))
+    city = html.escape(result.get("city", ""))
+    complexity = html.escape(str(result.get("complexity", "")).capitalize())
+
+    rows = []
+    for row in result.get("waste_breakdown", []):
+        rows.append(
+            "<tr>"
+            f"<td style='padding:6px 10px; border:1px solid #d9d9d9;'>{row.get('waste', '')}%</td>"
+            f"<td style='padding:6px 10px; border:1px solid #d9d9d9;'>{row.get('area', 0):,.0f} sq ft</td>"
+            f"<td style='padding:6px 10px; border:1px solid #d9d9d9;'>{row.get('squares', 0)} squares</td>"
+            "</tr>"
+        )
+
+    return f"""
+<html>
+  <body style="font-family: Arial, sans-serif; color: #222; line-height: 1.4;">
+    <p>Team,</p>
+    <p>Below is the Broward AI estimate summary.</p>
+    <p>
+      <strong>Property:</strong> {address}, {city}<br>
+      <strong>Ground Plane Area:</strong> {result.get('ground_area', 0):,.0f} sq ft<br>
+      <strong>Pitch:</strong> {result.get('pitch', '')}/12<br>
+      <strong>Complexity:</strong> {complexity}<br>
+      <strong>Adjusted Surface:</strong> {result.get('adjusted_surface', 0):,.0f} sq ft<br>
+      <strong>Recommended Waste:</strong> {result.get('recommended_waste', '')}%<br>
+      <strong>Final Quantity:</strong> {result.get('final_area', 0):,.0f} sq ft ({result.get('final_squares', 0)} squares)
+    </p>
+
+    <h4 style="margin-bottom: 8px;">Waste Breakdown</h4>
+    <table style="border-collapse: collapse; margin-bottom: 16px; min-width: 420px;">
+      <thead>
+        <tr>
+          <th style="padding:6px 10px; border:1px solid #d9d9d9; text-align:left;">Waste %</th>
+          <th style="padding:6px 10px; border:1px solid #d9d9d9; text-align:left;">Area</th>
+          <th style="padding:6px 10px; border:1px solid #d9d9d9; text-align:left;">Squares</th>
+        </tr>
+      </thead>
+      <tbody>
+        {''.join(rows)}
+      </tbody>
+    </table>
+
+    <h4 style="margin-bottom: 8px;">Report Images</h4>
+    <p style="margin: 0 0 8px 0;">Front Photo</p>
+    <img src="cid:front-photo" alt="Front photo" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; margin-bottom:14px;">
+
+    <p style="margin: 0 0 8px 0;">BCPA Sketch</p>
+    <img src="cid:bcpa-sketch" alt="BCPA sketch" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; background:#f8f9fa;">
+
+    <p style="margin-top: 16px; color: #666; font-size: 12px;">Broward AI Search is in beta. Validate on-site before ordering materials.</p>
+  </body>
+</html>
+"""
+
+
+def send_estimate_email(recipient, subject, body, result=None):
     if not (SMTP_HOST and SMTP_FROM_EMAIL):
         return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL (or SENDGRID_FROM_EMAIL) to enable outbound emails."
 
@@ -2537,6 +2614,29 @@ def send_estimate_email(recipient, subject, body):
         msg["From"] = SMTP_FROM_EMAIL
         msg["To"] = recipient
         msg.set_content(body)
+
+        if result:
+            inline_images = []
+            front_image = _decode_data_uri_image(result.get("report_front_image"))
+            sketch_image = _decode_data_uri_image(result.get("report_sketch_image"))
+            if front_image:
+                inline_images.append(("front-photo", front_image))
+            if sketch_image:
+                inline_images.append(("bcpa-sketch", sketch_image))
+
+            if inline_images:
+                msg.add_alternative(build_broward_email_html(result), subtype="html")
+                html_part = msg.get_payload()[-1]
+                for cid, image_data in inline_images:
+                    maintype, subtype = image_data["mime"].split("/", 1)
+                    html_part.add_related(
+                        image_data["bytes"],
+                        maintype=maintype,
+                        subtype=subtype,
+                        cid=f"<{cid}>",
+                        filename=f"{cid}.{subtype}",
+                        disposition="inline",
+                    )
 
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
             smtp.starttls()
@@ -2640,7 +2740,7 @@ def roof_estimator():
                     if broward_form["result_email"]:
                         summary = build_broward_email_summary(broward_result)
                         subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
-                        sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary)
+                        sent, email_message = send_estimate_email(broward_form["result_email"], subject, summary, broward_result)
                         flash(email_message)
                         if not sent:
                             flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL and SMTP credentials (or SENDGRID_API_KEY) to enable email delivery.")
@@ -2894,6 +2994,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
