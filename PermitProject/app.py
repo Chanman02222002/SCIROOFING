@@ -1730,6 +1730,10 @@ app.jinja_loader = DictLoader({
                     {% if pricing_result %}
                       <input type="hidden" name="pricing_material" value="{{ pricing_form.material }}">
                       <input type="hidden" name="access_level" value="{{ pricing_form.access_level }}">
+                      <input type="hidden" name="pricing_squares" value="{{ pricing_result.squares }}">
+                      <input type="hidden" name="pricing_price_per_square" value="{{ pricing_result.price_per_square }}">
+                      <input type="hidden" name="pricing_baseline_material" value="{{ pricing_result.baseline_material }}">
+                      <input type="hidden" name="pricing_estimated_total" value="{{ pricing_result.estimated_total }}">
                     {% endif %}
                     <div>
                       <label class="form-label">Email This Result To</label>
@@ -2692,6 +2696,51 @@ def build_pricing_email_summary(pricing_result):
     ]
     return "\n".join(lines)
 
+def parse_pricing_result_from_form(form):
+    material = form.get("pricing_material", "").strip().lower()
+    access_level = form.get("access_level", "").strip()
+
+    if not material or not access_level:
+        return {
+            "form": {
+                "access_level": access_level,
+                "material": material,
+            },
+            "result": None,
+        }
+
+    def _to_float(value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    squares_raw = form.get("pricing_squares", "").strip()
+    baseline_raw = form.get("pricing_baseline_material", "").strip()
+    price_per_square_raw = form.get("pricing_price_per_square", "").strip()
+    estimated_total_raw = form.get("pricing_estimated_total", "").strip()
+    has_pricing_payload = any([squares_raw, baseline_raw, price_per_square_raw, estimated_total_raw])
+
+    parsed_result = None
+    if has_pricing_payload:
+        parsed_result = {
+            "material": material,
+            "access_level": access_level,
+            "squares": round(_to_float(squares_raw), 1),
+            "baseline_material": _to_float(baseline_raw),
+            "price_per_square": _to_float(price_per_square_raw),
+            "estimated_total": _to_float(estimated_total_raw),
+        }
+
+    return {
+        "form": {
+            "access_level": access_level,
+            "material": material,
+        },
+        "result": parsed_result,
+    }
+
+
 
 def _decode_data_uri_image(data_uri):
     value = (data_uri or "").strip()
@@ -2925,17 +2974,16 @@ def roof_estimator():
                 "search_city": request.form.get("search_city", "").strip(),
                 "result_email": request.form.get("result_email", "").strip(),
             }
-            pricing_form = {
-                "access_level": request.form.get("access_level", "").strip(),
-                "material": request.form.get("pricing_material", "").strip().lower(),
-            }
+            pricing_payload = parse_pricing_result_from_form(request.form)
+            pricing_form = pricing_payload["form"]
+            pricing_result = pricing_payload["result"]
             broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
             if not broward_form["search_address"] or not broward_form["search_city"]:
                 flash("Please provide both address and city for Broward AI Search.")
             else:
                 try:
                     broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
-                    if pricing_form["access_level"] and pricing_form["material"]:
+                    if pricing_form["access_level"] and pricing_form["material"] and not pricing_result:
                         pricing_result = generate_sci_pricing_estimate({
                             "squares": broward_result.get("final_squares", 0),
                             "material": pricing_form["material"],
@@ -3250,6 +3298,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
