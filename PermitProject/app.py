@@ -2664,14 +2664,7 @@ def _pbcpao_collect_property_data(address, city):
                 "Palm Beach print map tab did not open; using GIS view screenshot fallback."
             )
             _safe_save_screenshot(map_file, "GIS map fallback")
-                else:
-                    driver.close()
-                    driver.switch_to.window(gis_tab)
-            except TimeoutException:
-                logger.warning(
-                    "Palm Beach print map tab did not open; using GIS view screenshot fallback."
-                )
-                _safe_save_screenshot(map_file, "GIS map fallback")
+                
         street_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_street.png")
         existing_tabs = driver.window_handles[:]
         google_button = wait.until(
@@ -3730,6 +3723,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
