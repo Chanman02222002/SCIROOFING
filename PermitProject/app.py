@@ -3222,11 +3222,7 @@ def roof_estimator():
                 flash("Please run Broward & Palm Beach Estimator first so we can pull the roof quantity.")
             elif not pricing_form["access_level"] or not pricing_form["material"]:
                 flash("Please choose both floor level/access and material.")
-                try:
-                    broward_result = normalize_broward_result(
-                        generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
-                    )
-                    broward_result = None
+                broward_result = None
             else:
                 try:
                     broward_result = normalize_broward_result(
@@ -3490,6 +3486,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
