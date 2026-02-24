@@ -2501,12 +2501,37 @@ def _pbcpao_collect_property_data(address, city):
     wait = WebDriverWait(driver, 30)
 
     def _safe_save_screenshot(file_path, context, retries=2):
+        def _capture_with_cdp_fallback():
+            try:
+                screenshot_data = driver.execute_cdp_cmd(
+                    "Page.captureScreenshot",
+                    {"format": "png", "fromSurface": True},
+                )
+            except Exception:
+                return False
+            data_b64 = screenshot_data.get("data") if isinstance(screenshot_data, dict) else None
+            if not data_b64:
+                return False
+            try:
+                with open(file_path, "wb") as screenshot_file:
+                    screenshot_file.write(base64.b64decode(data_b64))
+                return True
+            except Exception:
+                return False
+
         for attempt in range(1, retries + 1):
             try:
                 if driver.save_screenshot(file_path):
                     return True
                 logger.warning("Palm Beach %s screenshot returned falsy on attempt %s", context, attempt)
             except Exception as exc:
+                if _capture_with_cdp_fallback():
+                    logger.info(
+                        "Palm Beach %s screenshot recovered with CDP fallback on attempt %s",
+                        context,
+                        attempt,
+                    )
+                    return True
                 logger.warning(
                     "Palm Beach %s screenshot failed on attempt %s: %s",
                     context,
@@ -2585,11 +2610,9 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(0.5)
 
         if not latest_pdf:
-            if not latest_pdf:
-            if os.path.exists(sketch_file):
-                logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
-                _safe_save_screenshot(sketch_file, "sketch fallback")
-                sketch_text = _page_text()
+            logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
+            _safe_save_screenshot(sketch_file, "sketch fallback")
+            sketch_text = _page_text()
 
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
@@ -3704,6 +3727,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
