@@ -595,6 +595,30 @@ app.jinja_loader = DictLoader({
                 position: relative;
                 z-index: 1;
             }
+            .estimator-shell,
+            .estimator-shell h1,
+            .estimator-shell h2,
+            .estimator-shell h3,
+            .estimator-shell h4,
+            .estimator-shell h5,
+            .estimator-shell h6,
+            .estimator-shell p,
+            .estimator-shell li,
+            .estimator-shell label,
+            .estimator-shell span,
+            .estimator-shell small,
+            .estimator-shell td,
+            .estimator-shell th {
+                color: #0f172a;
+            }
+            .estimator-shell .text-muted,
+            .estimator-panel .text-muted,
+            .estimate-result .text-muted,
+            .waste-table .text-muted,
+            .estimator-shell .card-footer.text-muted {
+                color: #334155 !important;
+                opacity: 1;
+            }
             .estimate-badge {
                 display: inline-flex;
                 align-items: center;
@@ -739,6 +763,7 @@ app.jinja_loader = DictLoader({
             .waste-table {
                 min-width: 660px;
                 margin: 0;
+                color: #0f172a;
             }
             .waste-table th,
             .waste-table td {
@@ -3533,6 +3558,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
