@@ -2575,6 +2575,9 @@ def _pbcpao_collect_property_data(address, city):
                 driver.save_screenshot(sketch_file)
                 sketch_text = _page_text()
 
+        map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
+        map_captured_from_pdf = False
+
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
             property_url = driver.current_url
@@ -2583,9 +2586,12 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(3)
             sketch_text = _page_text()
             driver.save_screenshot(sketch_file)
+            # Palm Beach map PNG should match the generated sketch PDF output.
+            driver.save_screenshot(map_file)
+            map_captured_from_pdf = True
             driver.get(property_url)
             time.sleep(3)
-        map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
+
         old_tabs = driver.window_handles[:]
         map_button = wait.until(
             EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'papagis') and contains(text(),'Show Full Map')]"))
@@ -2601,24 +2607,25 @@ def _pbcpao_collect_property_data(address, city):
         wait.until(EC.element_to_be_clickable((By.ID, "tools-tab"))).click()
         time.sleep(2)
 
-        existing_tabs = driver.window_handles[:]
-        print_button = wait.until(
-            EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
-        )
-        driver.execute_script("arguments[0].click();", print_button)
-        try:
-            wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
-            print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
-            driver.switch_to.window(print_tab)
-            time.sleep(4)
-            driver.save_screenshot(map_file)
-            driver.close()
-            driver.switch_to.window(gis_tab)
-        except TimeoutException:
-            logger.warning(
-                "Palm Beach print map tab did not open; using GIS view screenshot fallback."
+        if not map_captured_from_pdf:
+            existing_tabs = driver.window_handles[:]
+            print_button = wait.until(
+                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
             )
-            driver.save_screenshot(map_file)
+            driver.execute_script("arguments[0].click();", print_button)
+            try:
+                wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+                print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+                driver.switch_to.window(print_tab)
+                time.sleep(4)
+                driver.save_screenshot(map_file)
+                driver.close()
+                driver.switch_to.window(gis_tab)
+            except TimeoutException:
+                logger.warning(
+                    "Palm Beach print map tab did not open; using GIS view screenshot fallback."
+                )
+                driver.save_screenshot(map_file)
 
         street_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_street.png")
         existing_tabs = driver.window_handles[:]
@@ -3677,6 +3684,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
