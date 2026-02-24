@@ -2450,11 +2450,27 @@ def _bcpa_collect_property_data(address, city):
         sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "broward_sketch.png")
         sketch_text = ""
 
-        sketch_button = wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]")
-            )
-        )
+        sketch_locators = [
+            (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"),
+            (By.XPATH, "//button[contains(@onclick,'printSketchDiv')]"),
+            (By.XPATH, "//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sketch')]"),
+            (By.XPATH, "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sketch')]"),
+            (By.CSS_SELECTOR, "[onclick*='printSketchDiv']"),
+        ]
+
+        sketch_button = None
+        for by, locator in sketch_locators:
+            try:
+                sketch_button = WebDriverWait(driver, 8).until(
+                    EC.element_to_be_clickable((by, locator))
+                )
+                if sketch_button:
+                    break
+            except TimeoutException:
+                continue
+
+        if not sketch_button:
+            raise Exception("Sketch button not found on BCPA record page.")
         
 
         # Capture existing PDFs BEFORE clicking the sketch button
@@ -3849,6 +3865,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
