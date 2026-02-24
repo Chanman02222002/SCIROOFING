@@ -2532,7 +2532,12 @@ def _pbcpao_collect_property_data(address, city):
             if os.path.exists(sketch_file):
                 logger.warning("Palm Beach sketch PDF not saved; using sketch tab screenshot fallback.")
             else:
-                raise Exception("Sketch PDF not saved.")
+                logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
+                driver.save_screenshot(sketch_file)
+                try:
+                    sketch_text = driver.find_element(By.TAG_NAME, "body").text
+                except Exception:
+                    sketch_text = ""
 
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
@@ -3528,6 +3533,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
