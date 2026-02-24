@@ -26,9 +26,9 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2433,6 +2433,123 @@ def _bcpa_collect_property_data(address, city):
         driver.quit()
 
 
+def _is_palm_beach_address(address, city):
+    combined = f"{address} {city}".lower()
+    palm_beach_cities = {
+        "boca raton", "boynton beach", "delray beach", "jupiter", "lake worth",
+        "lake worth beach", "west palm beach", "wellington", "palm beach gardens",
+        "riviera beach", "greenacres", "palm springs", "lantana", "north palm beach",
+    }
+    if "palm beach county" in combined:
+        return True
+    if "palm beach" in city.lower():
+        return True
+    return city.strip().lower() in palm_beach_cities
+
+
+def _pbcpao_collect_property_data(address, city):
+    driver = create_driver()
+    wait = WebDriverWait(driver, 30)
+
+    try:
+        driver.get("https://pbcpao.gov/index.htm")
+        time.sleep(4)
+
+        search_box = wait.until(EC.presence_of_element_located((By.ID, "realsrchVal")))
+        search_box.clear()
+        search_box.send_keys(f"{address}, {city}")
+        time.sleep(2)
+        search_box.send_keys(Keys.ARROW_DOWN)
+        search_box.send_keys(Keys.ENTER)
+        time.sleep(6)
+
+        ground_area = float(driver.find_element(
+            By.XPATH,
+            "//td[contains(text(),'Total Square Footage')]/following-sibling::td",
+        ).text.replace(",", "").strip())
+
+        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_sketch.png")
+        sketch_text = ""
+        sketch_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
+        )
+        previous_handles = driver.window_handles[:]
+        driver.execute_script("arguments[0].click();", sketch_button)
+        time.sleep(5)
+
+        if len(driver.window_handles) > len(previous_handles):
+            new_handle = [h for h in driver.window_handles if h not in previous_handles][0]
+            driver.switch_to.window(new_handle)
+            time.sleep(2)
+            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            driver.save_screenshot(sketch_file)
+            driver.close()
+            driver.switch_to.window(previous_handles[0])
+        else:
+            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            driver.save_screenshot(sketch_file)
+
+        map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
+        old_tabs = driver.window_handles[:]
+        map_button = wait.until(
+            EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'papagis') and contains(text(),'Show Full Map')]"))
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", map_button)
+        driver.execute_script("arguments[0].click();", map_button)
+
+        wait.until(lambda d: len(d.window_handles) > len(old_tabs))
+        gis_tab = [t for t in driver.window_handles if t not in old_tabs][0]
+        driver.switch_to.window(gis_tab)
+        time.sleep(6)
+
+        wait.until(EC.element_to_be_clickable((By.ID, "tools-tab"))).click()
+        time.sleep(2)
+
+        existing_tabs = driver.window_handles[:]
+        print_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
+        )
+        driver.execute_script("arguments[0].click();", print_button)
+        wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+        print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+        driver.switch_to.window(print_tab)
+        time.sleep(4)
+        driver.save_screenshot(map_file)
+        driver.close()
+        driver.switch_to.window(gis_tab)
+
+        street_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_street.png")
+        existing_tabs = driver.window_handles[:]
+        google_button = wait.until(
+            EC.presence_of_element_located((By.XPATH, "//span[contains(text(),'Google Maps')]/ancestor::*[self::a or self::div][1]"))
+        )
+        driver.execute_script("arguments[0].click();", google_button)
+        wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+        google_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+        driver.switch_to.window(google_tab)
+        time.sleep(6)
+
+        try:
+            street_tile = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.kAYW5b")))
+            driver.execute_script("arguments[0].click();", street_tile)
+            time.sleep(5)
+        except Exception:
+            logger.info("Palm Beach Street View tile not found; saving map screenshot fallback.")
+
+        driver.save_screenshot(street_file)
+
+        return {
+            "photo_url": "",
+            "sketch_text": sketch_text,
+            "sketch_file": sketch_file,
+            "map_file": map_file,
+            "street_file": street_file,
+            "ground_area": ground_area,
+        }
+    finally:
+        driver.quit()
+
+
 def _ask_openai_pitch_complexity_waste(photo_input, sketch_input, map_file):
     import os
     import json
@@ -2536,20 +2653,25 @@ def generate_broward_estimate(address, city):
     import requests
 
     cleaned_city = city.strip()
-    if "broward" not in cleaned_city.lower() and cleaned_city.lower() not in {
-        "fort lauderdale", "hollywood", "pompano beach", "coral springs", "sunrise", "weston", "davie",
-        "plantation", "miramar", "coconut creek", "deerfield beach", "oakland park", "lauderhill", "tamarac",
-    }:
-        cleaned_city = f"{cleaned_city} (Broward)" if cleaned_city else "Broward"
+    is_palm_beach = _is_palm_beach_address(address, cleaned_city)
 
-    bcpa_data = _bcpa_collect_property_data(address, cleaned_city)
-    ground_area = _extract_total_adj_area(bcpa_data["sketch_text"])
+    if is_palm_beach:
+        bcpa_data = _pbcpao_collect_property_data(address, cleaned_city)
+    else:
+        if "broward" not in cleaned_city.lower() and cleaned_city.lower() not in {
+            "fort lauderdale", "hollywood", "pompano beach", "coral springs", "sunrise", "weston", "davie",
+            "plantation", "miramar", "coconut creek", "deerfield beach", "oakland park", "lauderhill", "tamarac",
+        }:
+            cleaned_city = f"{cleaned_city} (Broward)" if cleaned_city else "Broward"
+        bcpa_data = _bcpa_collect_property_data(address, cleaned_city)
 
+    ground_area = _safe_float(bcpa_data.get("ground_area"), 0)
+    if ground_area <= 0:
+        ground_area = _extract_total_adj_area(bcpa_data["sketch_text"])
     # ---------------- BUILD EMBEDDED IMAGES (NO LOCAL SAVE) ----------------
     photo_url = bcpa_data.get("photo_url", "")
     photo_data_uri = ""
     sketch_data_uri = ""
-
     # Front photo: fetch into memory and convert to data URI
     # This makes it possible to (a) display in report and (b) send identical bytes to OpenAI
     photo_ok = False
@@ -2582,6 +2704,17 @@ def generate_broward_estimate(address, city):
     except Exception:
         sketch_ok = False
         sketch_data_uri = ""
+
+    # For Palm Beach we use street view as the front-photo input to match the county workflow.
+    if not photo_data_uri and bcpa_data.get("street_file") and os.path.exists(bcpa_data["street_file"]):
+        try:
+            with open(bcpa_data["street_file"], "rb") as f:
+                blob = f.read()
+            photo_bytes = len(blob)
+            photo_data_uri = f"data:image/png;base64,{base64.b64encode(blob).decode('utf-8')}"
+            photo_ok = True
+        except Exception:
+            photo_ok = False
 
     # Map: keep as file for OpenAI (already used today); also track health
     map_ok = os.path.exists(bcpa_data.get("map_file", "")) if bcpa_data.get("map_file") else False
@@ -3298,6 +3431,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
