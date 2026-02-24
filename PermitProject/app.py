@@ -2353,7 +2353,13 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-
+    prefs = {
+        "download.default_directory": BROWARD_OUTPUT_DIR,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "plugins.always_open_pdf_externally": True,
+    }
+    options.add_experimental_option("prefs", prefs)
     service = Service(driver_bin)
     return webdriver.Chrome(service=service, options=options)
     
@@ -2469,39 +2475,48 @@ def _pbcpao_collect_property_data(address, city):
 
         sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_sketch.png")
         sketch_text = ""
+        for old_pdf in [
+            os.path.join(BROWARD_OUTPUT_DIR, f)
+            for f in os.listdir(BROWARD_OUTPUT_DIR)
+            if f.lower().endswith(".pdf")
+        ]:
+            try:
+                os.remove(old_pdf)
+            except OSError:
+                logger.debug("Unable to remove old Palm Beach sketch PDF: %s", old_pdf)
+
         sketch_button = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
         )
-        onclick_js = sketch_button.get_attribute("onclick") or ""
-        previous_handles = driver.window_handles[:]
+        
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
 
-        if len(driver.window_handles) > len(previous_handles):
-            new_handle = [h for h in driver.window_handles if h not in previous_handles][0]
-            driver.switch_to.window(new_handle)
-            time.sleep(2)
-            sketch_text = driver.find_element(By.TAG_NAME, "body").text
-            driver.save_screenshot(sketch_file)
-            driver.close()
-            driver.switch_to.window(previous_handles[0])
-        else:
-            pdf_match = re.search(r"[\"']([^\"']+\\.pdf[^\"']*)[\"']", onclick_js, re.IGNORECASE)
-            pdf_url = urllib.parse.urljoin(driver.current_url, pdf_match.group(1)) if pdf_match else ""
-            if pdf_url:
-                current_handles = driver.window_handles[:]
-                driver.execute_script("window.open(arguments[0], '_blank');", pdf_url)
-                wait.until(lambda d: len(d.window_handles) > len(current_handles))
-                pdf_handle = [h for h in driver.window_handles if h not in current_handles][0]
-                driver.switch_to.window(pdf_handle)
-                time.sleep(3)
-                sketch_text = driver.find_element(By.TAG_NAME, "body").text
-                driver.save_screenshot(sketch_file)
-                driver.close()
-                driver.switch_to.window(current_handles[0])
-            else:
-                sketch_text = driver.find_element(By.TAG_NAME, "body").text
-                driver.save_screenshot(sketch_file)
+        pdf_deadline = time.time() + 20
+        latest_pdf = ""
+        while time.time() < pdf_deadline and not latest_pdf:
+            pdf_files = [
+                os.path.join(BROWARD_OUTPUT_DIR, f)
+                for f in os.listdir(BROWARD_OUTPUT_DIR)
+                if f.lower().endswith(".pdf")
+            ]
+            if pdf_files:
+                latest_pdf = max(pdf_files, key=os.path.getctime)
+                break
+            time.sleep(0.5)
+
+        if not latest_pdf:
+            raise Exception("Sketch PDF not saved.")
+
+        logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
+        property_url = driver.current_url
+        latest_pdf_uri = latest_pdf.replace('\\', '/')
+        driver.get(f"file:///{latest_pdf_uri}")
+        time.sleep(3)
+        sketch_text = driver.find_element(By.TAG_NAME, "body").text
+        driver.save_screenshot(sketch_file)
+        driver.get(property_url)
+        time.sleep(3)
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
         old_tabs = driver.window_handles[:]
@@ -3486,6 +3501,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
