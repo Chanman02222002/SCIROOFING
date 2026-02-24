@@ -2397,16 +2397,28 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
+
     prefs = {
         "download.default_directory": BROWARD_OUTPUT_DIR,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
-        "plugins.always_open_pdf_externally": True,  # CRITICAL: force download instead of in-browser PDF rendering
+        "plugins.always_open_pdf_externally": True,
     }
     options.add_experimental_option("prefs", prefs)
+
     service = Service(driver_bin)
-    return webdriver.Chrome(service=service, options=options)
-    
+    driver = webdriver.Chrome(service=service, options=options)
+
+    # 🔥 CRITICAL FOR HEADLESS LINUX DOWNLOADS (RAILWAY)
+    driver.execute_cdp_cmd(
+        "Page.setDownloadBehavior",
+        {
+            "behavior": "allow",
+            "downloadPath": BROWARD_OUTPUT_DIR,
+        },
+    )
+
+    return driver
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
 
@@ -3836,6 +3848,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
