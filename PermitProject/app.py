@@ -2616,7 +2616,6 @@ def _pbcpao_collect_property_data(address, city):
 
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
-        map_captured_from_pdf = False
 
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
@@ -2626,9 +2625,6 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(3)
             sketch_text = _page_text()
             _safe_save_screenshot(sketch_file, "sketch PDF")
-            # Palm Beach map PNG should match the generated sketch PDF output.
-            _safe_save_screenshot(map_file, "map from sketch PDF")
-            map_captured_from_pdf = True
             driver.get(property_url)
             time.sleep(3)
         old_tabs = driver.window_handles[:]
@@ -2646,21 +2642,28 @@ def _pbcpao_collect_property_data(address, city):
         wait.until(EC.element_to_be_clickable((By.ID, "tools-tab"))).click()
         time.sleep(2)
 
-        if not map_captured_from_pdf:
-            existing_tabs = driver.window_handles[:]
-            print_button = wait.until(
-                EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
+        existing_tabs = driver.window_handles[:]
+        print_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
+        )
+        driver.execute_script("arguments[0].click();", print_button)
+        try:
+            wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+            print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+            driver.switch_to.window(print_tab)
+            time.sleep(4)
+            if not _safe_save_screenshot(map_file, "print map tab"):
+                driver.close()
+                driver.switch_to.window(gis_tab)
+                _safe_save_screenshot(map_file, "GIS map fallback after print tab error")
+            else:
+                driver.close()
+                driver.switch_to.window(gis_tab)
+        except TimeoutException:
+            logger.warning(
+                "Palm Beach print map tab did not open; using GIS view screenshot fallback."
             )
-            driver.execute_script("arguments[0].click();", print_button)
-            try:
-                wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
-                print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
-                driver.switch_to.window(print_tab)
-                time.sleep(4)
-                if not _safe_save_screenshot(map_file, "print map tab"):
-                    driver.close()
-                    driver.switch_to.window(gis_tab)
-                    _safe_save_screenshot(map_file, "GIS map fallback after print tab error")
+            _safe_save_screenshot(map_file, "GIS map fallback")
                 else:
                     driver.close()
                     driver.switch_to.window(gis_tab)
@@ -3727,6 +3730,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
