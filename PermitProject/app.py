@@ -2337,11 +2337,12 @@ def _safe_float(value, fallback):
 
 
 def _extract_total_adj_area(sketch_text):
+    if not sketch_text:
+        raise ValueError("Could not extract Total Adj Area from empty BCPA sketch text.")
     match = re.search(r"Total\s+.*?\s+([\d,]+\.\d+|[\d,]+)\s*$", sketch_text, re.MULTILINE)
     if not match:
         raise ValueError("Could not extract Total Adj Area from BCPA sketch text.")
     return float(match.group(1).replace(",", ""))
-
 
 def _extract_json_object(raw_text):
     if not raw_text:
@@ -2523,6 +2524,12 @@ def _pbcpao_collect_property_data(address, city):
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
         )
         
+        def _page_text():
+            try:
+                return (driver.find_element(By.TAG_NAME, "body").text or "").strip()
+            except Exception:
+                return ""
+
         sketch_tabs_before = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
@@ -2536,7 +2543,7 @@ def _pbcpao_collect_property_data(address, city):
             driver.switch_to.window(sketch_tab)
             time.sleep(2)
             driver.save_screenshot(sketch_file)
-            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            sketch_text = _page_text()
             driver.close()
             driver.switch_to.window(sketch_tabs_before[0])
 
@@ -2555,14 +2562,9 @@ def _pbcpao_collect_property_data(address, city):
 
         if not latest_pdf:
             if os.path.exists(sketch_file):
-                logger.warning("Palm Beach sketch PDF not saved; using sketch tab screenshot fallback.")
-            else:
                 logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
                 driver.save_screenshot(sketch_file)
-                try:
-                    sketch_text = driver.find_element(By.TAG_NAME, "body").text
-                except Exception:
-                    sketch_text = ""
+                sketch_text = _page_text()
 
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
@@ -2570,11 +2572,10 @@ def _pbcpao_collect_property_data(address, city):
             latest_pdf_uri = latest_pdf.replace('\\', '/')
             driver.get(f"file:///{latest_pdf_uri}")
             time.sleep(3)
-            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            sketch_text = _page_text()
             driver.save_screenshot(sketch_file)
             driver.get(property_url)
             time.sleep(3)
-
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
         old_tabs = driver.window_handles[:]
         map_button = wait.until(
@@ -2753,7 +2754,11 @@ def generate_broward_estimate(address, city):
 
     ground_area = _safe_float(bcpa_data.get("ground_area"), 0)
     if ground_area <= 0:
-        ground_area = _extract_total_adj_area(bcpa_data["sketch_text"])
+        try:
+            ground_area = _extract_total_adj_area(bcpa_data.get("sketch_text", ""))
+        except ValueError:
+            logger.warning("Could not read sketch Total Adj Area for %s, %s; defaulting ground area to 0.", address, city)
+            ground_area = 0
     # ---------------- BUILD EMBEDDED IMAGES (NO LOCAL SAVE) ----------------
     photo_url = bcpa_data.get("photo_url", "")
     photo_data_uri = ""
@@ -2809,11 +2814,16 @@ def generate_broward_estimate(address, city):
     # ---------------- GPT (SEND SAME BYTES YOU SHOW IN REPORT) ----------------
     # IMPORTANT: update _ask_openai_pitch_complexity_waste to accept data URIs
     # If you haven't updated it yet, see note below.
-    ai_guess = _ask_openai_pitch_complexity_waste(
-        photo_data_uri,     # used to be bcpa_data["photo_url"]
-        sketch_data_uri,    # used to be bcpa_data["sketch_file"]
-        bcpa_data["map_file"],
-    )
+    try:
+        ai_guess = _ask_openai_pitch_complexity_waste(
+            photo_data_uri,     # used to be bcpa_data["photo_url"]
+            sketch_data_uri,    # used to be bcpa_data["sketch_file"]
+            bcpa_data["map_file"],
+        )
+    except Exception as exc:
+        logger.warning("Broward/Palm Beach AI image analysis failed; using defaults. Error: %s", exc)
+        ai_guess = {"pitch": 5, "complexity": "moderate", "waste_percent": 12.0}
+
 
     pitch = _safe_int(ai_guess.get("pitch"), 5)
     complexity = str(ai_guess.get("complexity", "moderate")).lower()
@@ -3558,6 +3568,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
