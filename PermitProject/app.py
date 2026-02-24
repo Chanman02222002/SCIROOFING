@@ -29,6 +29,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2597,13 +2598,19 @@ def _pbcpao_collect_property_data(address, city):
             EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Print Map')]/ancestor::*[self::a or self::div][1]"))
         )
         driver.execute_script("arguments[0].click();", print_button)
-        wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
-        print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
-        driver.switch_to.window(print_tab)
-        time.sleep(4)
-        driver.save_screenshot(map_file)
-        driver.close()
-        driver.switch_to.window(gis_tab)
+        try:
+            wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+            print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+            driver.switch_to.window(print_tab)
+            time.sleep(4)
+            driver.save_screenshot(map_file)
+            driver.close()
+            driver.switch_to.window(gis_tab)
+        except TimeoutException:
+            logger.warning(
+                "Palm Beach print map tab did not open; using GIS view screenshot fallback."
+            )
+            driver.save_screenshot(map_file)
 
         street_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_street.png")
         existing_tabs = driver.window_handles[:]
@@ -2611,11 +2618,24 @@ def _pbcpao_collect_property_data(address, city):
             EC.presence_of_element_located((By.XPATH, "//span[contains(text(),'Google Maps')]/ancestor::*[self::a or self::div][1]"))
         )
         driver.execute_script("arguments[0].click();", google_button)
-        wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
-        google_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
-        driver.switch_to.window(google_tab)
-        time.sleep(6)
-
+        try:
+            wait.until(lambda d: len(d.window_handles) > len(existing_tabs))
+            google_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
+            driver.switch_to.window(google_tab)
+            time.sleep(6)
+        except TimeoutException:
+            logger.warning(
+                "Palm Beach Google Maps tab did not open; using GIS map screenshot fallback."
+            )
+            driver.save_screenshot(street_file)
+            return {
+                "photo_url": "",
+                "sketch_text": sketch_text,
+                "sketch_file": sketch_file,
+                "map_file": map_file,
+                "street_file": street_file,
+                "ground_area": ground_area,
+            }
         try:
             street_tile = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.kAYW5b")))
             driver.execute_script("arguments[0].click();", street_tile)
@@ -3568,6 +3588,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
