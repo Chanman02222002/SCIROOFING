@@ -2401,7 +2401,7 @@ def create_driver():
         "download.default_directory": BROWARD_OUTPUT_DIR,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
-        "plugins.always_open_pdf_externally": True,
+        "plugins.always_open_pdf_externally": True,  # CRITICAL: force download instead of in-browser PDF rendering
     }
     options.add_experimental_option("prefs", prefs)
     service = Service(driver_bin)
@@ -2438,22 +2438,20 @@ def _bcpa_collect_property_data(address, city):
         sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "broward_sketch.png")
         sketch_text = ""
 
-        existing_pdf_names = {
-            f for f in os.listdir(BROWARD_OUTPUT_DIR)
-            if f.lower().endswith(".pdf")
-        }
-
         sketch_button = wait.until(
             EC.element_to_be_clickable(
                 (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]")
             )
         )
 
+        # Capture existing PDFs BEFORE clicking the sketch button
+        existing_pdf_names = {
+            f for f in os.listdir(BROWARD_OUTPUT_DIR)
+            if f.lower().endswith(".pdf")
+        }
+
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sketch_button)
         driver.execute_script("arguments[0].click();", sketch_button)
-
-        time.sleep(5)
-
         # Wait for new PDF file
         pdf_deadline = time.time() + 25
         latest_pdf = ""
@@ -3838,6 +3836,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
