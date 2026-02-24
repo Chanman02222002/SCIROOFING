@@ -2580,22 +2580,9 @@ def _pbcpao_collect_property_data(address, city):
             except Exception:
                 return ""
 
-        sketch_tabs_before = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
 
-        # Some PBCPAO sessions open the sketch PDF in a new tab instead of downloading.
-        # Capture that tab as a fallback so estimator runs do not fail on missing downloads.
-        sketch_tabs_after = driver.window_handles[:]
-        sketch_tab_candidates = [t for t in sketch_tabs_after if t not in sketch_tabs_before]
-        if sketch_tab_candidates:
-            sketch_tab = sketch_tab_candidates[0]
-            driver.switch_to.window(sketch_tab)
-            time.sleep(2)
-            _safe_save_screenshot(sketch_file, "sketch tab")
-            sketch_text = _page_text()
-            driver.close()
-            driver.switch_to.window(sketch_tabs_before[0])
         pdf_deadline = time.time() + 20
         latest_pdf = ""
         while time.time() < pdf_deadline and not latest_pdf:
@@ -2619,13 +2606,12 @@ def _pbcpao_collect_property_data(address, city):
 
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
-            property_url = driver.current_url
             latest_pdf_uri = latest_pdf.replace('\\', '/')
             driver.get(f"file:///{latest_pdf_uri}")
             time.sleep(3)
             sketch_text = _page_text()
             _safe_save_screenshot(sketch_file, "sketch PDF")
-            driver.get(property_url)
+            driver.back()
             time.sleep(3)
         old_tabs = driver.window_handles[:]
         map_button = wait.until(
@@ -3723,6 +3709,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
