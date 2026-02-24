@@ -29,7 +29,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchWindowException, TimeoutException
+from selenium.common.exceptions import TimeoutException
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2397,7 +2397,6 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-
     prefs = {
         "download.default_directory": BROWARD_OUTPUT_DIR,
         "download.prompt_for_download": False,
@@ -2405,20 +2404,9 @@ def create_driver():
         "plugins.always_open_pdf_externally": True,
     }
     options.add_experimental_option("prefs", prefs)
-
     service = Service(driver_bin)
-    driver = webdriver.Chrome(service=service, options=options)
-
-    # 🔥 CRITICAL FOR HEADLESS LINUX DOWNLOADS (RAILWAY)
-    driver.execute_cdp_cmd(
-        "Page.setDownloadBehavior",
-        {
-            "behavior": "allow",
-            "downloadPath": BROWARD_OUTPUT_DIR,
-        },
-    )
-
-    return driver
+    return webdriver.Chrome(service=service, options=options)
+    
 def _bcpa_collect_property_data(address, city):
     driver = create_driver()
 
@@ -2443,88 +2431,33 @@ def _bcpa_collect_property_data(address, city):
         prop_img_tag = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='/Photographs/']")))
         photo_url = prop_img_tag.get_attribute("src")
 
-        # ================= SKETCH =================
+        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "sketch.png")
+        existing_handles = driver.window_handles
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.btn-sketch"))).click()
+        sketch_window = list(set(driver.window_handles) - set(existing_handles))[0]
+        driver.switch_to.window(sketch_window)
+        time.sleep(3)
+        sketch_text = driver.find_element(By.TAG_NAME, "body").text
+        # ---- FORCE FULL SKETCH VISIBILITY ----
 
-        print("Opening Sketch (PDF save + same-tab capture)...")
-
-        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "broward_sketch.png")
-        sketch_text = ""
-
-        sketch_locators = [
-            (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"),
-            (By.XPATH, "//button[contains(@onclick,'printSketchDiv')]"),
-            (By.XPATH, "//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sketch')]"),
-            (By.XPATH, "//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sketch')]"),
-            (By.CSS_SELECTOR, "[onclick*='printSketchDiv']"),
-        ]
-
-        sketch_button = None
-        for by, locator in sketch_locators:
-            try:
-                sketch_button = WebDriverWait(driver, 8).until(
-                    EC.element_to_be_clickable((by, locator))
-                )
-                if sketch_button:
-                    break
-            except TimeoutException:
-                continue
-
-        if not sketch_button:
-            raise Exception("Sketch button not found on BCPA record page.")
+        # Scroll to bottom so entire sketch renders
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
         
-
-        # Capture existing PDFs BEFORE clicking the sketch button
-        existing_pdf_names = {
-            f for f in os.listdir(BROWARD_OUTPUT_DIR)
-            if f.lower().endswith(".pdf")
-        }
-
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sketch_button)
-        driver.execute_script("arguments[0].click();", sketch_button)
-        # Wait for new PDF file
-        pdf_deadline = time.time() + 25
-        latest_pdf = ""
-
-        while time.time() < pdf_deadline and not latest_pdf:
-            pdf_files = [
-                os.path.join(BROWARD_OUTPUT_DIR, f)
-                for f in os.listdir(BROWARD_OUTPUT_DIR)
-                if f.lower().endswith(".pdf") and f not in existing_pdf_names
-            ]
-            if pdf_files:
-                latest_pdf = max(pdf_files, key=os.path.getctime)
-                break
-            time.sleep(0.5)
-
-        if not latest_pdf:
-            raise Exception("Sketch PDF not saved.")
-
-        print("Sketch PDF saved:", latest_pdf)
-
-        # Ensure file finished writing
-        stable_wait_deadline = time.time() + 10
-        last_size = -1
-        while time.time() < stable_wait_deadline:
-            current_size = os.path.getsize(latest_pdf)
-            if current_size > 0 and current_size == last_size:
-                break
-            last_size = current_size
-            time.sleep(0.5)
-
-        # Navigate SAME TAB to PDF
-        latest_pdf_uri = latest_pdf.replace("\\", "/")
-        driver.get(f"file:///{latest_pdf_uri}")
-
-        time.sleep(3)
-
-        # Screenshot rendered PDF viewer
+        # Get actual rendered dimensions
+        total_height = driver.execute_script("return document.body.scrollHeight")
+        total_width = driver.execute_script("return document.body.scrollWidth")
+        
+        # Resize browser window to fit entire sketch
+        driver.set_window_size(total_width + 200, total_height + 200)
+        time.sleep(1)
+        
+        # Now take screenshot (will include bottom portion)
         driver.save_screenshot(sketch_file)
-
-        print("Sketch PNG captured successfully.")
-
-        # Go back to property page
-        driver.back()
-        time.sleep(3)
+        
+        # --------------------------------------
+        driver.close()
+        driver.switch_to.window(existing_handles[0])
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "map.png")
         existing_handles = driver.window_handles
@@ -2567,27 +2500,6 @@ def _pbcpao_collect_property_data(address, city):
     driver = create_driver()
     wait = WebDriverWait(driver, 30)
 
-    def _safe_close_window(window_handle=None):
-        """Close a tab only when it's still open to avoid NoSuchWindowException."""
-        try:
-            handles = driver.window_handles
-        except Exception:
-            return False
-        if window_handle and window_handle not in handles:
-            return False
-        if not handles:
-            return False
-        if window_handle:
-            try:
-                driver.switch_to.window(window_handle)
-            except Exception:
-                return False
-        try:
-            driver.close()
-            return True
-        except NoSuchWindowException:
-            return False
-
     def _safe_save_screenshot(file_path, context, retries=2):
         def _capture_with_cdp_fallback():
             try:
@@ -2629,42 +2541,6 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(1)
         return False
 
-    def _download_pdf_from_current_tab():
-        """Try to save a sketch PDF straight from the active tab URL using browser cookies."""
-        try:
-            current_url = (driver.current_url or "").strip()
-        except Exception:
-            current_url = ""
-        if not current_url or not current_url.lower().startswith(("http://", "https://")):
-            return ""
-
-        try:
-            response = requests.get(
-                current_url,
-                timeout=20,
-                cookies={cookie["name"]: cookie["value"] for cookie in driver.get_cookies()},
-                allow_redirects=True,
-            )
-        except Exception:
-            logger.exception("Palm Beach sketch PDF fetch failed for URL: %s", current_url)
-            return ""
-
-        content_type = (response.headers.get("Content-Type") or "").lower()
-        if "pdf" not in content_type and not current_url.lower().endswith(".pdf"):
-            logger.info("Palm Beach sketch URL is not a PDF: %s (%s)", current_url, content_type)
-            return ""
-
-        pdf_filename = f"palm_beach_sketch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf_path = os.path.join(BROWARD_OUTPUT_DIR, pdf_filename)
-        try:
-            with open(pdf_path, "wb") as pdf_file:
-                pdf_file.write(response.content)
-            logger.info("Palm Beach sketch PDF downloaded from tab URL: %s", pdf_path)
-            return pdf_path
-        except Exception:
-            logger.exception("Palm Beach sketch PDF could not be written to disk: %s", pdf_path)
-            return ""
-
     try:
         driver.get("https://pbcpao.gov/index.htm")
         time.sleep(4)
@@ -2684,18 +2560,18 @@ def _pbcpao_collect_property_data(address, city):
 
         sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_sketch.png")
         sketch_text = ""
-
-        existing_pdf_names = {
-            f for f in os.listdir(BROWARD_OUTPUT_DIR) if f.lower().endswith(".pdf")
-        }
+        for old_pdf in [
+            os.path.join(BROWARD_OUTPUT_DIR, f)
+            for f in os.listdir(BROWARD_OUTPUT_DIR)
+            if f.lower().endswith(".pdf")
+        ]:
+            try:
+                os.remove(old_pdf)
+            except OSError:
+                logger.debug("Unable to remove old Palm Beach sketch PDF: %s", old_pdf)
 
         sketch_button = wait.until(
-            EC.element_to_be_clickable(
-                (
-                    By.XPATH,
-                    "//a[contains(@onclick,'printSketchDiv') and contains(normalize-space(.), 'Print Building 1 Sketch')]",
-                )
-            )
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
         )
         
         def _page_text():
@@ -2704,55 +2580,32 @@ def _pbcpao_collect_property_data(address, city):
             except Exception:
                 return ""
 
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sketch_button)
-        old_sketch_tabs = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
 
-        pdf_deadline = time.time() + 25
+        pdf_deadline = time.time() + 20
         latest_pdf = ""
         while time.time() < pdf_deadline and not latest_pdf:
             pdf_files = [
                 os.path.join(BROWARD_OUTPUT_DIR, f)
                 for f in os.listdir(BROWARD_OUTPUT_DIR)
-                if f.lower().endswith(".pdf") and f not in existing_pdf_names
+                if f.lower().endswith(".pdf")
             ]
             if pdf_files:
                 latest_pdf = max(pdf_files, key=os.path.getctime)
                 break
             time.sleep(0.5)
-        if not latest_pdf:
-            try:
-                if len(driver.window_handles) > len(old_sketch_tabs):
-                    sketch_tab = [tab for tab in driver.window_handles if tab not in old_sketch_tabs][0]
-                    driver.switch_to.window(sketch_tab)
-                    time.sleep(2)
-                    latest_pdf = _download_pdf_from_current_tab()
-                    _safe_close_window(sketch_tab)
-                    if old_sketch_tabs:
-                        driver.switch_to.window(old_sketch_tabs[0])
-            except Exception:
-                logger.exception("Palm Beach sketch popup fallback failed.")
 
         if not latest_pdf:
             logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
             _safe_save_screenshot(sketch_file, "sketch fallback")
             sketch_text = _page_text()
 
+
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
 
         if latest_pdf:
             logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
-
-            stable_wait_deadline = time.time() + 10
-            last_size = -1
-            while time.time() < stable_wait_deadline:
-                current_size = os.path.getsize(latest_pdf)
-                if current_size > 0 and current_size == last_size:
-                    break
-                last_size = current_size
-                time.sleep(0.5)
-
             latest_pdf_uri = latest_pdf.replace('\\', '/')
             driver.get(f"file:///{latest_pdf_uri}")
             time.sleep(3)
@@ -2786,21 +2639,12 @@ def _pbcpao_collect_property_data(address, city):
             driver.switch_to.window(print_tab)
             time.sleep(4)
             if not _safe_save_screenshot(map_file, "print map tab"):
-                _safe_close_window(print_tab)
-                if gis_tab in driver.window_handles:
-                    driver.switch_to.window(gis_tab)
+                driver.close()
+                driver.switch_to.window(gis_tab)
                 _safe_save_screenshot(map_file, "GIS map fallback after print tab error")
             else:
-                _safe_close_window(print_tab)
-                if gis_tab in driver.window_handles:
-                    driver.switch_to.window(gis_tab)
-        except NoSuchWindowException:
-            logger.warning(
-                "Palm Beach print map tab closed unexpectedly; using GIS view screenshot fallback."
-            )
-            if gis_tab in driver.window_handles:
+                driver.close()
                 driver.switch_to.window(gis_tab)
-                _safe_save_screenshot(map_file, "GIS map fallback after print tab closed")
         except TimeoutException:
             logger.warning(
                 "Palm Beach print map tab did not open; using GIS view screenshot fallback."
@@ -3865,8 +3709,6 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
-
-
 
 
 
