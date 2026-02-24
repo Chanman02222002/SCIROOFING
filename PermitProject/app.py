@@ -676,6 +676,15 @@ app.jinja_loader = DictLoader({
                 border: 1px solid rgba(15,23,42,.08);
                 padding: 1rem 1.2rem;
                 box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+                color: #000;
+            }
+            .estimate-kpi .text-muted {
+                color: #000 !important;
+                opacity: 1;
+            }
+            .estimate-kpi strong,
+            .estimate-kpi div {
+                color: #000;
             }
             .broward-chip {
                 display: inline-flex;
@@ -3501,6 +3510,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
