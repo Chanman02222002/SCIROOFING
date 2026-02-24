@@ -2602,6 +2602,42 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(1)
         return False
 
+    def _download_pdf_from_current_tab():
+        """Try to save a sketch PDF straight from the active tab URL using browser cookies."""
+        try:
+            current_url = (driver.current_url or "").strip()
+        except Exception:
+            current_url = ""
+        if not current_url or not current_url.lower().startswith(("http://", "https://")):
+            return ""
+
+        try:
+            response = requests.get(
+                current_url,
+                timeout=20,
+                cookies={cookie["name"]: cookie["value"] for cookie in driver.get_cookies()},
+                allow_redirects=True,
+            )
+        except Exception:
+            logger.exception("Palm Beach sketch PDF fetch failed for URL: %s", current_url)
+            return ""
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if "pdf" not in content_type and not current_url.lower().endswith(".pdf"):
+            logger.info("Palm Beach sketch URL is not a PDF: %s (%s)", current_url, content_type)
+            return ""
+
+        pdf_filename = f"palm_beach_sketch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        pdf_path = os.path.join(BROWARD_OUTPUT_DIR, pdf_filename)
+        try:
+            with open(pdf_path, "wb") as pdf_file:
+                pdf_file.write(response.content)
+            logger.info("Palm Beach sketch PDF downloaded from tab URL: %s", pdf_path)
+            return pdf_path
+        except Exception:
+            logger.exception("Palm Beach sketch PDF could not be written to disk: %s", pdf_path)
+            return ""
+
     try:
         driver.get("https://pbcpao.gov/index.htm")
         time.sleep(4)
@@ -2642,6 +2678,7 @@ def _pbcpao_collect_property_data(address, city):
                 return ""
 
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sketch_button)
+        old_sketch_tabs = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
 
@@ -2658,10 +2695,22 @@ def _pbcpao_collect_property_data(address, city):
                 break
             time.sleep(0.5)
         if not latest_pdf:
+            try:
+                if len(driver.window_handles) > len(old_sketch_tabs):
+                    sketch_tab = [tab for tab in driver.window_handles if tab not in old_sketch_tabs][0]
+                    driver.switch_to.window(sketch_tab)
+                    time.sleep(2)
+                    latest_pdf = _download_pdf_from_current_tab()
+                    _safe_close_window(sketch_tab)
+                    if old_sketch_tabs:
+                        driver.switch_to.window(old_sketch_tabs[0])
+            except Exception:
+                logger.exception("Palm Beach sketch popup fallback failed.")
+
+        if not latest_pdf:
             logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
             _safe_save_screenshot(sketch_file, "sketch fallback")
             sketch_text = _page_text()
-
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
 
@@ -3789,6 +3838,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
