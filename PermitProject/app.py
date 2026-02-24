@@ -29,7 +29,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import NoSuchWindowException, TimeoutException
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -2540,6 +2540,27 @@ def _pbcpao_collect_property_data(address, city):
     driver = create_driver()
     wait = WebDriverWait(driver, 30)
 
+    def _safe_close_window(window_handle=None):
+        """Close a tab only when it's still open to avoid NoSuchWindowException."""
+        try:
+            handles = driver.window_handles
+        except Exception:
+            return False
+        if window_handle and window_handle not in handles:
+            return False
+        if not handles:
+            return False
+        if window_handle:
+            try:
+                driver.switch_to.window(window_handle)
+            except Exception:
+                return False
+        try:
+            driver.close()
+            return True
+        except NoSuchWindowException:
+            return False
+
     def _safe_save_screenshot(file_path, context, retries=2):
         def _capture_with_cdp_fallback():
             try:
@@ -2689,12 +2710,21 @@ def _pbcpao_collect_property_data(address, city):
             driver.switch_to.window(print_tab)
             time.sleep(4)
             if not _safe_save_screenshot(map_file, "print map tab"):
-                driver.close()
-                driver.switch_to.window(gis_tab)
+                _safe_close_window(print_tab)
+                if gis_tab in driver.window_handles:
+                    driver.switch_to.window(gis_tab)
                 _safe_save_screenshot(map_file, "GIS map fallback after print tab error")
             else:
-                driver.close()
+                _safe_close_window(print_tab)
+                if gis_tab in driver.window_handles:
+                    driver.switch_to.window(gis_tab)
+        except NoSuchWindowException:
+            logger.warning(
+                "Palm Beach print map tab closed unexpectedly; using GIS view screenshot fallback."
+            )
+            if gis_tab in driver.window_handles:
                 driver.switch_to.window(gis_tab)
+                _safe_save_screenshot(map_file, "GIS map fallback after print tab closed")
         except TimeoutException:
             logger.warning(
                 "Palm Beach print map tab did not open; using GIS view screenshot fallback."
@@ -3759,6 +3789,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
