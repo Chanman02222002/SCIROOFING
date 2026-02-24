@@ -1,6 +1,6 @@
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, send_file, abort
+    url_for, session, flash, send_file, abort, send_from_directory, render_template_string
 )
 import os
 import random
@@ -1687,6 +1687,14 @@ app.jinja_loader = DictLoader({
                       </div>
                     {% endif %}
                   </div>
+
+                  {% if broward_result.is_palm_beach %}
+                    <div class="d-flex justify-content-end mb-3">
+                      <a class="btn btn-outline-dark btn-sm" href="{{ url_for('palm_beach_saved_outputs') }}" target="_blank" rel="noopener noreferrer">
+                        Open Palm Beach Saved Files
+                      </a>
+                    </div>
+                  {% endif %}
                 
                   <div class="text-muted small">
                     Broward & Palm Beach Estimator is in beta. Validate on-site before ordering materials.
@@ -2883,6 +2891,7 @@ def generate_broward_estimate(address, city):
     return {
         "address": address,
         "city": cleaned_city,
+        "is_palm_beach": is_palm_beach,
         "ground_area": round(ground_area, 0),
         "pitch": pitch,
         "complexity": complexity,
@@ -3550,7 +3559,87 @@ def download_data(brand):
     out_path = os.path.join(BASE_DIR, f"export_{brand}.csv")
     df.to_csv(out_path, index=False)
     return send_file(out_path, as_attachment=True, download_name=f"{brand}_properties.csv")
-    
+@app.route("/debug/palm-beach-outputs")
+def palm_beach_saved_outputs():
+    if not require_login():
+        return redirect(url_for("login"))
+
+    palm_beach_files = []
+    for name in sorted(os.listdir(BROWARD_OUTPUT_DIR), reverse=True):
+        if not (name.startswith("palm_beach_") or name.lower().endswith(".pdf")):
+            continue
+        full_path = os.path.join(BROWARD_OUTPUT_DIR, name)
+        if not os.path.isfile(full_path):
+            continue
+        palm_beach_files.append({
+            "name": name,
+            "size_kb": round(os.path.getsize(full_path) / 1024, 1),
+            "modified": datetime.fromtimestamp(os.path.getmtime(full_path)).strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    return render_template_string(
+        """
+        <!doctype html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Palm Beach Saved Outputs</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; background: #f7f8fb; }
+              .card { max-width: 980px; margin: 0 auto; background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+              table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+              th, td { text-align: left; border-bottom: 1px solid #e5e7eb; padding: 8px; }
+              th { background: #f1f5f9; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2 style="margin-top:0;">Palm Beach Saved Outputs</h2>
+              <p style="color:#475569;">Folder: {{ output_dir }}</p>
+              {% if files %}
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Modified</th><th>Size (KB)</th><th>Open</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for file in files %}
+                      <tr>
+                        <td>{{ file.name }}</td>
+                        <td>{{ file.modified }}</td>
+                        <td>{{ file.size_kb }}</td>
+                        <td><a href="{{ url_for('palm_beach_saved_output_file', filename=file.name) }}" target="_blank" rel="noopener noreferrer">Open</a></td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              {% else %}
+                <p>No Palm Beach output files found yet.</p>
+              {% endif %}
+            </div>
+          </body>
+        </html>
+        """,
+        files=palm_beach_files,
+        output_dir=BROWARD_OUTPUT_DIR,
+    )
+
+
+@app.route("/debug/palm-beach-outputs/<path:filename>")
+def palm_beach_saved_output_file(filename):
+    if not require_login():
+        return redirect(url_for("login"))
+
+    safe_name = os.path.basename(filename)
+    if safe_name != filename:
+        abort(400)
+    if not (safe_name.startswith("palm_beach_") or safe_name.lower().endswith(".pdf")):
+        abort(404)
+    full_path = os.path.join(BROWARD_OUTPUT_DIR, safe_name)
+    if not os.path.isfile(full_path):
+        abort(404)
+    return send_from_directory(BROWARD_OUTPUT_DIR, safe_name)
+
 @app.get("/health")
 def health():
     return {"ok": True}, 200
@@ -3588,6 +3677,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
