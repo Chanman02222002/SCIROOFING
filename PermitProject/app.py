@@ -1449,8 +1449,7 @@ app.jinja_loader = DictLoader({
               <div>
                 <div class="estimate-badge mb-2">Estimator Command Center</div>
                 <h2>Roof Estimator Tool</h2>
-                <p>Use standard estimating or launch the dedicated Broward AI Search beta for address-driven takeoff guidance.</p>
-              </div>
+                <p>Use standard estimating or launch the dedicated Broward & Palm Beach Estimator beta for address-driven takeoff guidance.</p>
             </div>
           </div>
           <div class="row g-4">
@@ -1513,25 +1512,25 @@ app.jinja_loader = DictLoader({
                 <hr class="my-4">
 
                 <div class="d-flex align-items-center justify-content-between mb-2">
-                  <h5 class="mb-0">Broward AI Search</h5>
-                  <span class="broward-chip">Broward Beta</span>
+                  <h5 class="mb-0">Broward & Palm Beach Estimator</h5>
+                  <span class="broward-chip">Beta</span>
                 </div>
-                <p class="text-muted mb-3">Separate AI search flow for Broward properties with address + city enrichment and email-ready results.</p>
-                <form method="post" class="vstack gap-3 estimator-form" data-loading-message="Running Broward AI Search...">
+                <p class="text-muted mb-3">Dedicated AI search flow for Broward + Palm Beach properties with address + city enrichment and email-ready results.</p>
+                <form method="post" class="vstack gap-3 estimator-form" data-loading-message="Running Broward & Palm Beach Estimator...">
                   <input type="hidden" name="action" value="broward_ai_search">
                   <div>
                     <label class="form-label">Property Address</label>
                     <input type="text" name="search_address" class="form-control" placeholder="123 Main St" value="{{ broward_form.search_address or '' }}" required>
                   </div>
                   <div>
-                    <label class="form-label">City (Broward)</label>
+                    <label class="form-label">City (Broward or Palm Beach)</label>
                     <div class="input-group">
                       <input type="text" id="broward-city" name="search_city" class="form-control" placeholder="Fort Lauderdale" value="{{ broward_form.search_city or '' }}" required>
                       <button class="btn btn-outline-primary" id="add-city-btn" type="button">Add City</button>
                     </div>
                     <div class="form-text" id="city-preview">{{ broward_query or 'Address, City will appear here' }}</div>
                   </div>
-                  <button class="btn btn-dark btn-lg">Run Broward AI Search</button>
+                  <button class="btn btn-dark btn-lg">Run Broward & Palm Beach Estimator</button>
                 </form>
               </div>
             </div>
@@ -1639,7 +1638,7 @@ app.jinja_loader = DictLoader({
                     {% if broward_result.report_sketch_image %}
                       <div class="col-md-6">
                         <div class="card shadow-sm h-100">
-                          <div class="card-header fw-semibold">BCPA Sketch</div>
+                          <div class="card-header fw-semibold">Property Sketch</div>
                           <div class="card-body p-2">
                             <img class="img-fluid rounded border"
                                  style="width:100%; max-height:360px; object-fit:contain; background:#f8f9fa;"
@@ -1655,7 +1654,7 @@ app.jinja_loader = DictLoader({
                   </div>
                 
                   <div class="text-muted small">
-                    Broward AI Search is in beta. Validate on-site before ordering materials.
+                    Broward & Palm Beach Estimator is in beta. Validate on-site before ordering materials.
                   </div>
 
                   <hr class="my-4">
@@ -1773,13 +1772,13 @@ app.jinja_loader = DictLoader({
                 
                 {% else %}
                   <div class="text-muted mb-4">
-                    Generate a standard estimate or run Broward AI Search to see polished results here.
+                    Generate a standard estimate or run Broward & Palm Beach Estimator to see polished results here.
                   </div>
                 
                   <div class="estimate-result">
                     <h6 class="mb-2">What you will get</h6>
                     <ul class="mb-0 text-muted">
-                      <li>Dedicated Broward AI search button and loading state.</li>
+                      <li>Dedicated Broward & Palm Beach estimator button and loading state.</li>
                       <li>Professional result layout with waste overage options.</li>
                       <li>Optional email delivery to your chosen recipient.</li>
                     </ul>
@@ -2473,6 +2472,7 @@ def _pbcpao_collect_property_data(address, city):
         sketch_button = wait.until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
         )
+        onclick_js = sketch_button.get_attribute("onclick") or ""
         previous_handles = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
@@ -2486,8 +2486,22 @@ def _pbcpao_collect_property_data(address, city):
             driver.close()
             driver.switch_to.window(previous_handles[0])
         else:
-            sketch_text = driver.find_element(By.TAG_NAME, "body").text
-            driver.save_screenshot(sketch_file)
+            pdf_match = re.search(r"[\"']([^\"']+\\.pdf[^\"']*)[\"']", onclick_js, re.IGNORECASE)
+            pdf_url = urllib.parse.urljoin(driver.current_url, pdf_match.group(1)) if pdf_match else ""
+            if pdf_url:
+                current_handles = driver.window_handles[:]
+                driver.execute_script("window.open(arguments[0], '_blank');", pdf_url)
+                wait.until(lambda d: len(d.window_handles) > len(current_handles))
+                pdf_handle = [h for h in driver.window_handles if h not in current_handles][0]
+                driver.switch_to.window(pdf_handle)
+                time.sleep(3)
+                sketch_text = driver.find_element(By.TAG_NAME, "body").text
+                driver.save_screenshot(sketch_file)
+                driver.close()
+                driver.switch_to.window(current_handles[0])
+            else:
+                sketch_text = driver.find_element(By.TAG_NAME, "body").text
+                driver.save_screenshot(sketch_file)
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
         old_tabs = driver.window_handles[:]
@@ -2557,7 +2571,7 @@ def _ask_openai_pitch_complexity_waste(photo_input, sketch_input, map_file):
     import urllib.request
 
     if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is required for Broward AI Search.")
+        raise RuntimeError("OPENAI_API_KEY is required for Broward & Palm Beach Estimator.")
 
     def _to_data_uri_png_from_file(path: str) -> str:
         with open(path, "rb") as f:
@@ -2595,7 +2609,7 @@ def _ask_openai_pitch_complexity_waste(photo_input, sketch_input, map_file):
     # Map is always a file path in your flow
     map_part = _as_image_url_obj(map_file)
     if map_part is None:
-        raise RuntimeError("Map image missing/unreadable; cannot run Broward AI Search.")
+        raise RuntimeError("Map image missing/unreadable; cannot run Broward & Palm Beach Estimator.")
 
     # Photo can be URL or data URI (or file path if you choose later)
     photo_part = _as_image_url_obj(photo_input)
@@ -2786,11 +2800,11 @@ def generate_broward_estimate(address, city):
 
 def build_broward_email_summary(result):
     lines = [
-        f"Subject: Broward AI Roof Estimate - {result['address']}, {result['city']}",
+        f"Subject: Broward & Palm Beach Roof Estimate - {result['address']}, {result['city']}",
         "",
         "Team,",
         "",
-        "Below is the Broward AI estimate summary.",
+        "Below is the Broward & Palm Beach estimate summary.",
         "",
         f"Property: {result['address']}, {result['city']}",
         f"Ground Plane Area: {result['ground_area']:,.0f} sq ft",
@@ -2807,7 +2821,7 @@ def build_broward_email_summary(result):
     lines.extend([
         "",
         "Notes:",
-        "- Broward AI Search is currently in beta.",
+        "- Broward & Palm Beach Estimator is currently in beta.",
         "- Figures are directional and should be field-verified.",
     ])
     return "\n".join(lines)
@@ -2947,7 +2961,7 @@ def build_broward_email_html(result, pricing_result=None):
 <html>
   <body style="font-family: Arial, sans-serif; color: #222; line-height: 1.4;">
     <p>Team,</p>
-    <p>Below is the Broward AI estimate summary.</p>
+    <p>Below is the Broward & Palm Beach estimate summary.</p>
     <p>
       <strong>Property:</strong> {address}, {city}<br>
       <strong>Ground Plane Area:</strong> {result.get('ground_area', 0):,.0f} sq ft<br>
@@ -2978,10 +2992,10 @@ def build_broward_email_html(result, pricing_result=None):
     <p style="margin: 0 0 8px 0;">Front Photo</p>
     <img src="cid:front-photo" alt="Front photo" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; margin-bottom:14px;">
 
-    <p style="margin: 0 0 8px 0;">BCPA Sketch</p>
-    <img src="cid:bcpa-sketch" alt="BCPA sketch" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; background:#f8f9fa;">
+    <p style="margin: 0 0 8px 0;">Property Sketch</p>
+    <img src="cid:bcpa-sketch" alt="Property sketch" style="display:block; max-width:100%; max-height:360px; border:1px solid #d9d9d9; border-radius:6px; background:#f8f9fa;">
 
-    <p style="margin-top: 16px; color: #666; font-size: 12px;">Broward AI Search is in beta. Validate on-site before ordering materials.</p>
+    <p style="margin-top: 16px; color: #666; font-size: 12px;">Broward & Palm Beach Estimator is in beta. Validate on-site before ordering materials.</p>
   </body>
 </html>
 """
@@ -3112,7 +3126,7 @@ def roof_estimator():
             pricing_result = pricing_payload["result"]
             broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
             if not broward_form["search_address"] or not broward_form["search_city"]:
-                flash("Please provide both address and city for Broward AI Search.")
+                flash("Please provide both address and city for Broward & Palm Beach Estimator.")
             else:
                 try:
                     broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
@@ -3122,7 +3136,7 @@ def roof_estimator():
                             "material": pricing_form["material"],
                             "access_level": pricing_form["access_level"],
                         })
-                    flash("Broward AI Search complete.")
+                    flash("Broward & Palm Beach Estimator complete.")
                     try:
                         dbg = broward_result.get("debug_images") or {}
                         sketch_note = "OK" if dbg.get("sketch_ok") else "MISSING"
@@ -3135,7 +3149,7 @@ def roof_estimator():
                         pass
                     if broward_form["result_email"]:
                         summary = build_broward_email_summary(broward_result) + build_pricing_email_summary(pricing_result)
-                        subject = f"Broward AI Roof Estimate - {broward_result['address']}, {broward_result['city']}"
+                        subject = f"Broward & Palm Beach Roof Estimate - {broward_result['address']}, {broward_result['city']}"
                         sent, email_message = send_estimate_email(
                             broward_form["result_email"],
                             subject,
@@ -3147,8 +3161,8 @@ def roof_estimator():
                         if not sent:
                             flash("Tip: configure SMTP_HOST / SMTP_FROM_EMAIL and SMTP credentials (or SENDGRID_API_KEY) to enable email delivery.")
                 except Exception as exc:
-                    logger.exception("Broward AI Search failed")
-                    flash(f"Broward AI Search failed: {exc}")
+                    logger.exception("Broward & Palm Beach Estimator failed")
+                    flash(f"Broward & Palm Beach Estimator failed: {exc}")
 
         elif action == "add_pricing":
             broward_form = {
@@ -3163,7 +3177,7 @@ def roof_estimator():
             broward_query = ", ".join(part for part in [broward_form["search_address"], broward_form["search_city"]] if part)
 
             if not broward_form["search_address"] or not broward_form["search_city"]:
-                flash("Please run Broward AI Search first so we can pull the roof quantity.")
+                flash("Please run Broward & Palm Beach Estimator first so we can pull the roof quantity.")
             elif not pricing_form["access_level"] or not pricing_form["material"]:
                 flash("Please choose both floor level/access and material.")
                 try:
@@ -3431,6 +3445,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
