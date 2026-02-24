@@ -2798,6 +2798,46 @@ def generate_broward_estimate(address, city):
     }
 
 
+def normalize_broward_result(result):
+    """Backfill key KPI fields so the result tiles never render empty."""
+    if not isinstance(result, dict):
+        return result
+
+    normalized = dict(result)
+    waste_rows = normalized.get("waste_breakdown") or []
+    recommended_row = next((row for row in waste_rows if row.get("recommended")), None)
+    if not recommended_row and waste_rows:
+        recommended_row = waste_rows[0]
+
+    ground_area = _safe_float(normalized.get("ground_area"), 0)
+    if ground_area <= 0:
+        ground_area = _safe_float(normalized.get("lot_area"), 0)
+
+    final_area = _safe_float(normalized.get("final_area"), 0)
+    if final_area <= 0 and recommended_row:
+        final_area = _safe_float(recommended_row.get("area"), 0)
+
+    final_squares = _safe_float(normalized.get("final_squares"), 0)
+    if final_squares <= 0 and recommended_row:
+        final_squares = _safe_float(recommended_row.get("squares"), 0)
+    if final_squares <= 0 and final_area > 0:
+        final_squares = final_area / 100
+
+    adjusted_surface = _safe_float(normalized.get("adjusted_surface"), 0)
+    if adjusted_surface <= 0 and final_area > 0:
+        waste_percent = _safe_float(normalized.get("recommended_waste"), 0)
+        divisor = 1 + (waste_percent / 100)
+        adjusted_surface = final_area / divisor if divisor > 0 else final_area
+
+    normalized["ground_area"] = round(ground_area, 0)
+    normalized["final_area"] = round(final_area, 0)
+    normalized["final_squares"] = round(final_squares, 1)
+    normalized["adjusted_surface"] = round(adjusted_surface, 0)
+    normalized["pitch"] = _safe_int(normalized.get("pitch"), 5)
+    normalized["complexity"] = _s(normalized.get("complexity")) or "moderate"
+    normalized["recommended_waste"] = round(_safe_float(normalized.get("recommended_waste"), 12), 1)
+    return normalized
+
 def build_broward_email_summary(result):
     lines = [
         f"Subject: Broward & Palm Beach Roof Estimate - {result['address']}, {result['city']}",
@@ -3129,7 +3169,9 @@ def roof_estimator():
                 flash("Please provide both address and city for Broward & Palm Beach Estimator.")
             else:
                 try:
-                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    broward_result = normalize_broward_result(
+                        generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    )
                     if pricing_form["access_level"] and pricing_form["material"] and not pricing_result:
                         pricing_result = generate_sci_pricing_estimate({
                             "squares": broward_result.get("final_squares", 0),
@@ -3181,12 +3223,15 @@ def roof_estimator():
             elif not pricing_form["access_level"] or not pricing_form["material"]:
                 flash("Please choose both floor level/access and material.")
                 try:
-                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
-                except Exception:
+                    broward_result = normalize_broward_result(
+                        generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    )
                     broward_result = None
             else:
                 try:
-                    broward_result = generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    broward_result = normalize_broward_result(
+                        generate_broward_estimate(broward_form["search_address"], broward_form["search_city"])
+                    )
                     pricing_result = generate_sci_pricing_estimate({
                         "squares": broward_result.get("final_squares", 0),
                         "material": pricing_form["material"],
@@ -3445,6 +3490,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
