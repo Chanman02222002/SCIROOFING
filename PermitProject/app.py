@@ -2498,8 +2498,22 @@ def _pbcpao_collect_property_data(address, city):
             EC.element_to_be_clickable((By.XPATH, "//a[contains(@onclick,'printSketchDiv')]"))
         )
         
+        sketch_tabs_before = driver.window_handles[:]
         driver.execute_script("arguments[0].click();", sketch_button)
         time.sleep(5)
+
+        # Some PBCPAO sessions open the sketch PDF in a new tab instead of downloading.
+        # Capture that tab as a fallback so estimator runs do not fail on missing downloads.
+        sketch_tabs_after = driver.window_handles[:]
+        sketch_tab_candidates = [t for t in sketch_tabs_after if t not in sketch_tabs_before]
+        if sketch_tab_candidates:
+            sketch_tab = sketch_tab_candidates[0]
+            driver.switch_to.window(sketch_tab)
+            time.sleep(2)
+            driver.save_screenshot(sketch_file)
+            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            driver.close()
+            driver.switch_to.window(sketch_tabs_before[0])
 
         pdf_deadline = time.time() + 20
         latest_pdf = ""
@@ -2515,17 +2529,21 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(0.5)
 
         if not latest_pdf:
-            raise Exception("Sketch PDF not saved.")
+            if os.path.exists(sketch_file):
+                logger.warning("Palm Beach sketch PDF not saved; using sketch tab screenshot fallback.")
+            else:
+                raise Exception("Sketch PDF not saved.")
 
-        logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
-        property_url = driver.current_url
-        latest_pdf_uri = latest_pdf.replace('\\', '/')
-        driver.get(f"file:///{latest_pdf_uri}")
-        time.sleep(3)
-        sketch_text = driver.find_element(By.TAG_NAME, "body").text
-        driver.save_screenshot(sketch_file)
-        driver.get(property_url)
-        time.sleep(3)
+        if latest_pdf:
+            logger.info("Palm Beach sketch PDF saved: %s", latest_pdf)
+            property_url = driver.current_url
+            latest_pdf_uri = latest_pdf.replace('\\', '/')
+            driver.get(f"file:///{latest_pdf_uri}")
+            time.sleep(3)
+            sketch_text = driver.find_element(By.TAG_NAME, "body").text
+            driver.save_screenshot(sketch_file)
+            driver.get(property_url)
+            time.sleep(3)
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
         old_tabs = driver.window_handles[:]
@@ -3510,6 +3528,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
