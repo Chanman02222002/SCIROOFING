@@ -2558,7 +2558,7 @@ def _pbcpao_collect_property_data(address, city):
             "//td[contains(text(),'Total Square Footage')]/following-sibling::td",
         ).text.replace(",", "").strip())
 
-        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_sketch.png")␊
+        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_sketch.png")
         sketch_text = ""
 
         existing_pdf_names = {
@@ -3719,6 +3719,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
