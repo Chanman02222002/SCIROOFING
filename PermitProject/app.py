@@ -2431,33 +2431,73 @@ def _bcpa_collect_property_data(address, city):
         prop_img_tag = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='/Photographs/']")))
         photo_url = prop_img_tag.get_attribute("src")
 
-        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "sketch.png")
-        existing_handles = driver.window_handles
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.btn-sketch"))).click()
-        sketch_window = list(set(driver.window_handles) - set(existing_handles))[0]
-        driver.switch_to.window(sketch_window)
-        time.sleep(3)
-        sketch_text = driver.find_element(By.TAG_NAME, "body").text
-        # ---- FORCE FULL SKETCH VISIBILITY ----
+        # ================= SKETCH =================
 
-        # Scroll to bottom so entire sketch renders
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1)
-        
-        # Get actual rendered dimensions
-        total_height = driver.execute_script("return document.body.scrollHeight")
-        total_width = driver.execute_script("return document.body.scrollWidth")
-        
-        # Resize browser window to fit entire sketch
-        driver.set_window_size(total_width + 200, total_height + 200)
-        time.sleep(1)
-        
-        # Now take screenshot (will include bottom portion)
+        print("Opening Sketch (PDF save + same-tab capture)...")
+
+        sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "broward_sketch.png")
+        sketch_text = ""
+
+        existing_pdf_names = {
+            f for f in os.listdir(BROWARD_OUTPUT_DIR)
+            if f.lower().endswith(".pdf")
+        }
+
+        sketch_button = wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]")
+            )
+        )
+
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", sketch_button)
+        driver.execute_script("arguments[0].click();", sketch_button)
+
+        time.sleep(5)
+
+        # Wait for new PDF file
+        pdf_deadline = time.time() + 25
+        latest_pdf = ""
+
+        while time.time() < pdf_deadline and not latest_pdf:
+            pdf_files = [
+                os.path.join(BROWARD_OUTPUT_DIR, f)
+                for f in os.listdir(BROWARD_OUTPUT_DIR)
+                if f.lower().endswith(".pdf") and f not in existing_pdf_names
+            ]
+            if pdf_files:
+                latest_pdf = max(pdf_files, key=os.path.getctime)
+                break
+            time.sleep(0.5)
+
+        if not latest_pdf:
+            raise Exception("Sketch PDF not saved.")
+
+        print("Sketch PDF saved:", latest_pdf)
+
+        # Ensure file finished writing
+        stable_wait_deadline = time.time() + 10
+        last_size = -1
+        while time.time() < stable_wait_deadline:
+            current_size = os.path.getsize(latest_pdf)
+            if current_size > 0 and current_size == last_size:
+                break
+            last_size = current_size
+            time.sleep(0.5)
+
+        # Navigate SAME TAB to PDF
+        latest_pdf_uri = latest_pdf.replace("\\", "/")
+        driver.get(f"file:///{latest_pdf_uri}")
+
+        time.sleep(3)
+
+        # Screenshot rendered PDF viewer
         driver.save_screenshot(sketch_file)
-        
-        # --------------------------------------
-        driver.close()
-        driver.switch_to.window(existing_handles[0])
+
+        print("Sketch PNG captured successfully.")
+
+        # Go back to property page
+        driver.back()
+        time.sleep(3)
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "map.png")
         existing_handles = driver.window_handles
@@ -3719,6 +3759,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
