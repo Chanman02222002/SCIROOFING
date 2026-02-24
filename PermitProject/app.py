@@ -2451,10 +2451,11 @@ def _bcpa_collect_property_data(address, city):
         sketch_text = ""
 
         sketch_button = wait.until(
-            EC.element_to_be_clickable(
+            EC.presence_of_element_located(
                 (By.XPATH, "//a[contains(@onclick,'printSketchDiv')]")
             )
         )
+        
 
         # Capture existing PDFs BEFORE clicking the sketch button
         existing_pdf_names = {
@@ -3848,6 +3849,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
