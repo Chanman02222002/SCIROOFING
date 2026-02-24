@@ -2500,6 +2500,22 @@ def _pbcpao_collect_property_data(address, city):
     driver = create_driver()
     wait = WebDriverWait(driver, 30)
 
+    def _safe_save_screenshot(file_path, context, retries=2):
+        for attempt in range(1, retries + 1):
+            try:
+                if driver.save_screenshot(file_path):
+                    return True
+                logger.warning("Palm Beach %s screenshot returned falsy on attempt %s", context, attempt)
+            except Exception as exc:
+                logger.warning(
+                    "Palm Beach %s screenshot failed on attempt %s: %s",
+                    context,
+                    attempt,
+                    exc,
+                )
+            time.sleep(1)
+        return False
+
     try:
         driver.get("https://pbcpao.gov/index.htm")
         time.sleep(4)
@@ -2551,11 +2567,10 @@ def _pbcpao_collect_property_data(address, city):
             sketch_tab = sketch_tab_candidates[0]
             driver.switch_to.window(sketch_tab)
             time.sleep(2)
-            driver.save_screenshot(sketch_file)
+            _safe_save_screenshot(sketch_file, "sketch tab")
             sketch_text = _page_text()
             driver.close()
             driver.switch_to.window(sketch_tabs_before[0])
-
         pdf_deadline = time.time() + 20
         latest_pdf = ""
         while time.time() < pdf_deadline and not latest_pdf:
@@ -2570,10 +2585,12 @@ def _pbcpao_collect_property_data(address, city):
             time.sleep(0.5)
 
         if not latest_pdf:
+            if not latest_pdf:
             if os.path.exists(sketch_file):
                 logger.warning("Palm Beach sketch PDF not saved; capturing page screenshot fallback.")
-                driver.save_screenshot(sketch_file)
+                _safe_save_screenshot(sketch_file, "sketch fallback")
                 sketch_text = _page_text()
+
 
         map_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_map.png")
         map_captured_from_pdf = False
@@ -2585,13 +2602,12 @@ def _pbcpao_collect_property_data(address, city):
             driver.get(f"file:///{latest_pdf_uri}")
             time.sleep(3)
             sketch_text = _page_text()
-            driver.save_screenshot(sketch_file)
+            _safe_save_screenshot(sketch_file, "sketch PDF")
             # Palm Beach map PNG should match the generated sketch PDF output.
-            driver.save_screenshot(map_file)
+            _safe_save_screenshot(map_file, "map from sketch PDF")
             map_captured_from_pdf = True
             driver.get(property_url)
             time.sleep(3)
-
         old_tabs = driver.window_handles[:]
         map_button = wait.until(
             EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'papagis') and contains(text(),'Show Full Map')]"))
@@ -2618,15 +2634,18 @@ def _pbcpao_collect_property_data(address, city):
                 print_tab = [t for t in driver.window_handles if t not in existing_tabs][0]
                 driver.switch_to.window(print_tab)
                 time.sleep(4)
-                driver.save_screenshot(map_file)
-                driver.close()
-                driver.switch_to.window(gis_tab)
+                if not _safe_save_screenshot(map_file, "print map tab"):
+                    driver.close()
+                    driver.switch_to.window(gis_tab)
+                    _safe_save_screenshot(map_file, "GIS map fallback after print tab error")
+                else:
+                    driver.close()
+                    driver.switch_to.window(gis_tab)
             except TimeoutException:
                 logger.warning(
                     "Palm Beach print map tab did not open; using GIS view screenshot fallback."
                 )
-                driver.save_screenshot(map_file)
-
+                _safe_save_screenshot(map_file, "GIS map fallback")
         street_file = os.path.join(BROWARD_OUTPUT_DIR, "palm_beach_street.png")
         existing_tabs = driver.window_handles[:]
         google_button = wait.until(
@@ -2642,7 +2661,7 @@ def _pbcpao_collect_property_data(address, city):
             logger.warning(
                 "Palm Beach Google Maps tab did not open; using GIS map screenshot fallback."
             )
-            driver.save_screenshot(street_file)
+            _safe_save_screenshot(street_file, "street fallback from GIS")
             return {
                 "photo_url": "",
                 "sketch_text": sketch_text,
@@ -2658,7 +2677,8 @@ def _pbcpao_collect_property_data(address, city):
         except Exception:
             logger.info("Palm Beach Street View tile not found; saving map screenshot fallback.")
 
-        driver.save_screenshot(street_file)
+        _safe_save_screenshot(street_file, "street")
+
 
         return {
             "photo_url": "",
@@ -3684,6 +3704,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
