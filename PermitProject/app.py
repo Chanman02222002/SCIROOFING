@@ -1249,6 +1249,14 @@ app.jinja_loader = DictLoader({
 
           const normalizeFilter = (value) => (value ?? "").toString().trim().toLowerCase();
           const isAllFilter = (value) => normalizeFilter(value) === "all";
+          const locationMatchesFilter = (location, filterValue = activeFilter) => {
+            if (isAllFilter(filterValue)) {
+              return true;
+            }
+            return normalizeFilter(location?.type) === normalizeFilter(filterValue);
+          };
+          const getVisibleLocations = (filterValue = activeFilter) =>
+            projectLocations.filter((location) => locationMatchesFilter(location, filterValue));
 
           const buildIcon = (color) =>
             L.divIcon({
@@ -1288,15 +1296,15 @@ app.jinja_loader = DictLoader({
               );
             });
 
+            const visibleLocations = getVisibleLocations(activeFilter);
+            const visibleIds = new Set(visibleLocations.map((location) => location.id));
+
             if (mapInstance) {
               mapInstance.closePopup();
               projectLocations.forEach((location) => {
-                const matches =
-                  isAllFilter(activeFilter) ||
-                  normalizeFilter(location.type) === activeFilter;
                 const marker = markerById.get(location.id);
                 if (marker) {
-                  if (matches) {
+                  if (visibleIds.has(location.id)) {
                     marker.addTo(mapInstance);
                   } else {
                     mapInstance.removeLayer(marker);
@@ -1328,12 +1336,7 @@ app.jinja_loader = DictLoader({
             }
             resultsContainer.innerHTML = "";
             cardById.clear();
-            projectLocations
-              .filter(
-                (location) =>
-                  isAllFilter(activeFilter) ||
-                  normalizeFilter(location.type) === activeFilter
-              )
+            getVisibleLocations(activeFilter)
               .forEach((location) => {
                 const card = document.createElement("div");
                 card.className = "map-result-card";
@@ -3709,6 +3712,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
