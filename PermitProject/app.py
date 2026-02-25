@@ -1338,34 +1338,41 @@ app.jinja_loader = DictLoader({
           };
 
           const applyFilter = (filter) => {
-            if (!filter) {
-              return;
-            }
+            if (!filter) return;
+
             activeFilter = normalizeFilter(filter);
+
             filterInputs.forEach((input) => {
               input.checked = normalizeFilter(input.value) === activeFilter;
             });
 
             const visibleLocations = getVisibleLocations(activeFilter);
-            const visibleIds = new Set(visibleLocations.map((location) => location._locationKey));
+            const visibleKeys = new Set(
+              visibleLocations.map((location) => location._locationKey)
+            );
 
             if (mapInstance) {
               mapInstance.closePopup();
+
               keyedLocations.forEach((location) => {
                 const marker = markerById.get(location._locationKey);
-                if (marker) {
-                  if (visibleIds.has(location._locationKey)) {
-                    marker.addTo(mapInstance);
-                  } else {
-                    mapInstance.removeLayer(marker);
-                  }
+                if (!marker) return;
+
+                if (visibleKeys.has(location._locationKey)) {
+                  marker.addTo(mapInstance);
+                } else {
+                  mapInstance.removeLayer(marker);
                 }
               });
             }
 
             renderResults();
+
             if (activeLocationId) {
-              const activeLocation = keyedLocations.find((loc) => loc._locationKey === activeLocationId);
+              const activeLocation = keyedLocations.find(
+                (loc) => loc._locationKey === activeLocationId
+              );
+
               if (
                 !activeLocation ||
                 (!isAllFilter(activeFilter) &&
@@ -1375,8 +1382,6 @@ app.jinja_loader = DictLoader({
                   cardById.get(activeLocationId).classList.remove("active");
                 }
                 activeLocationId = null;
-              } else if (cardById.has(activeLocationId)) {
-                cardById.get(activeLocationId).classList.add("active");
               }
             }
           };
@@ -1402,7 +1407,10 @@ app.jinja_loader = DictLoader({
                   <div class="text-muted small">Status: ${location.status || "Unknown"}</div>
                 `;
                 card.addEventListener("click", () => {
-                  setActiveLocation(location._locationKey, { openPopup: true });
+                  setActiveLocation(location._locationKey, {
+                    openPopup: true,
+                    scroll: false,
+                  });
                   if (mapInstance) {
                     mapInstance.setView(location.coords, 12.5, { animate: true });
                   }
@@ -3763,6 +3771,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
