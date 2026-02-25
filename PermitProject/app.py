@@ -1291,6 +1291,12 @@ app.jinja_loader = DictLoader({
           const filterInputs = document.querySelectorAll("input[name='project-filter']");
           const markerById = new Map();
           const cardById = new Map();
+          const getLocationKey = (location, index) =>
+            location?.id ?? `${location?.name || "project"}-${location?.address || "location"}-${index}`;
+          const keyedLocations = projectLocations.map((location, index) => ({
+            ...location,
+            _locationKey: getLocationKey(location, index),
+          }));
           let activeFilter = "all";
           let activeLocationId = null;
 
@@ -1303,7 +1309,7 @@ app.jinja_loader = DictLoader({
             return normalizeFilter(location?.type) === normalizeFilter(filterValue);
           };
           const getVisibleLocations = (filterValue = activeFilter) =>
-            projectLocations.filter((location) => locationMatchesFilter(location, filterValue));
+            keyedLocations.filter((location) => locationMatchesFilter(location, filterValue));
 
           const buildIcon = (color) =>
             L.divIcon({
@@ -1340,16 +1346,15 @@ app.jinja_loader = DictLoader({
               input.checked = normalizeFilter(input.value) === activeFilter;
             });
 
-
             const visibleLocations = getVisibleLocations(activeFilter);
-            const visibleIds = new Set(visibleLocations.map((location) => location.id));
+            const visibleIds = new Set(visibleLocations.map((location) => location._locationKey));
 
             if (mapInstance) {
               mapInstance.closePopup();
-              projectLocations.forEach((location) => {
-                const marker = markerById.get(location.id);
+              keyedLocations.forEach((location) => {
+                const marker = markerById.get(location._locationKey);
                 if (marker) {
-                  if (visibleIds.has(location.id)) {
+                  if (visibleIds.has(location._locationKey)) {
                     marker.addTo(mapInstance);
                   } else {
                     mapInstance.removeLayer(marker);
@@ -1360,7 +1365,7 @@ app.jinja_loader = DictLoader({
 
             renderResults();
             if (activeLocationId) {
-              const activeLocation = projectLocations.find((loc) => loc.id === activeLocationId);
+              const activeLocation = keyedLocations.find((loc) => loc._locationKey === activeLocationId);
               if (
                 !activeLocation ||
                 (!isAllFilter(activeFilter) &&
@@ -1385,7 +1390,7 @@ app.jinja_loader = DictLoader({
               .forEach((location) => {
                 const card = document.createElement("div");
                 card.className = "map-result-card";
-                card.dataset.locationId = location.id;
+                card.dataset.locationId = location._locationKey;
                 const legendClass = `legend-${(location.type || "").toString().toLowerCase()}`;
                 card.innerHTML = `
                   <div class="fw-semibold">${location.name}</div>
@@ -1397,13 +1402,13 @@ app.jinja_loader = DictLoader({
                   <div class="text-muted small">Status: ${location.status || "Unknown"}</div>
                 `;
                 card.addEventListener("click", () => {
-                  setActiveLocation(location.id, { openPopup: true });
+                  setActiveLocation(location._locationKey, { openPopup: true });
                   if (mapInstance) {
                     mapInstance.setView(location.coords, 12.5, { animate: true });
                   }
                 });
                 resultsContainer.appendChild(card);
-                cardById.set(location.id, card);
+                cardById.set(location._locationKey, card);
               });
           };
 
@@ -1417,16 +1422,16 @@ app.jinja_loader = DictLoader({
               attribution: "&copy; OpenStreetMap contributors",
             }).addTo(mapInstance);
 
-            projectLocations.forEach((location) => {
+            keyedLocations.forEach((location) => {
               const color = iconColors[location.type] || "#0ea5e9";
               const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(mapInstance);
               marker.bindPopup(
                 `<strong>${location.name}</strong><br>${location.type} · ${location.city}<br>${location.address || ""}<br>Status: ${location.status || "Unknown"}`
               );
               marker.on("click", () => {
-                setActiveLocation(location.id, { scroll: true, openPopup: false });
+                setActiveLocation(location._locationKey, { scroll: true, openPopup: false });
               });
-              markerById.set(location.id, marker);
+              markerById.set(location._locationKey, marker);
             });
 
             renderResults();
@@ -3758,6 +3763,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
