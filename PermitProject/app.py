@@ -879,9 +879,41 @@ app.jinja_loader = DictLoader({
                 border-color: rgba(37, 99, 235, 0.6);
                 box-shadow: 0 12px 30px rgba(37, 99, 235, 0.25);
             }
-            .map-filter .btn {
-                font-size: .85rem;
-                font-weight: 600;
+            .map-filter-pills {
+                display: flex;
+                flex-wrap: wrap;
+                gap: .4rem;
+            }
+            .map-filter-option {
+                position: relative;
+            }
+            .map-filter-option input {
+                position: absolute;
+                opacity: 0;
+                pointer-events: none;
+            }
+            .map-filter-option label {
+                cursor: pointer;
+                margin: 0;
+                border: 1px solid rgba(15, 23, 42, 0.16);
+                color: #334155;
+                background: #fff;
+                border-radius: 999px;
+                padding: .35rem .75rem;
+                font-size: .82rem;
+                font-weight: 700;
+                line-height: 1.1;
+                transition: all .15s ease;
+            }
+            .map-filter-option input:checked + label {
+                background: #1d4ed8;
+                color: #fff;
+                border-color: #1d4ed8;
+                box-shadow: 0 10px 20px rgba(29, 78, 216, .25);
+            }
+            .map-filter-option input:focus-visible + label {
+                outline: 2px solid rgba(37, 99, 235, .45);
+                outline-offset: 2px;
             }
             .map-result-card span {
                 display: inline-flex;
@@ -1201,12 +1233,27 @@ app.jinja_loader = DictLoader({
                   <div class="col-lg-4">
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
                       <div class="fw-semibold">Listings</div>
-                      <div class="btn-group map-filter" role="group" aria-label="Filter projects">
-                        <button type="button" class="btn btn-outline-primary btn-sm active" data-filter="All">All</button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Residential">Residential</button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Commercial">Commercial</button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Repairs">Repairs</button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" data-filter="Maintenance">Maintenance</button>
+                      <div class="map-filter-pills" role="radiogroup" aria-label="Filter projects">
+                        <div class="map-filter-option">
+                          <input type="radio" id="project-filter-all" name="project-filter" value="All" checked>
+                          <label for="project-filter-all">All</label>
+                        </div>
+                        <div class="map-filter-option">
+                          <input type="radio" id="project-filter-residential" name="project-filter" value="Residential">
+                          <label for="project-filter-residential">Residential</label>
+                        </div>
+                        <div class="map-filter-option">
+                          <input type="radio" id="project-filter-commercial" name="project-filter" value="Commercial">
+                          <label for="project-filter-commercial">Commercial</label>
+                        </div>
+                        <div class="map-filter-option">
+                          <input type="radio" id="project-filter-repairs" name="project-filter" value="Repairs">
+                          <label for="project-filter-repairs">Repairs</label>
+                        </div>
+                        <div class="map-filter-option">
+                          <input type="radio" id="project-filter-maintenance" name="project-filter" value="Maintenance">
+                          <label for="project-filter-maintenance">Maintenance</label>
+                        </div>
                       </div>
                     </div>
                     <div class="map-results" id="project-map-results"></div>
@@ -1240,8 +1287,8 @@ app.jinja_loader = DictLoader({
           };
 
           const resultsContainer = document.getElementById("project-map-results");
-          const filterGroup = document.querySelector(".map-filter");
-          const filterButtons = document.querySelectorAll(".map-filter [data-filter]");
+          const filterGroup = document.querySelector(".map-filter-pills");
+          const filterInputs = document.querySelectorAll("input[name='project-filter']");
           const markerById = new Map();
           const cardById = new Map();
           let activeFilter = "all";
@@ -1289,12 +1336,10 @@ app.jinja_loader = DictLoader({
               return;
             }
             activeFilter = normalizeFilter(filter);
-            filterButtons.forEach((button) => {
-              button.classList.toggle(
-                "active",
-                normalizeFilter(button.dataset.filter) === activeFilter
-              );
+            filterInputs.forEach((input) => {
+              input.checked = normalizeFilter(input.value) === activeFilter;
             });
+
 
             const visibleLocations = getVisibleLocations(activeFilter);
             const visibleIds = new Set(visibleLocations.map((location) => location.id));
@@ -1418,11 +1463,12 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          if (filterGroup && filterButtons.length) {
-            filterButtons.forEach((button) => {
-              button.addEventListener("click", () => {
-                applyFilter(button.dataset.filter);
-              });
+          if (filterGroup && filterInputs.length) {
+            filterGroup.addEventListener("change", (event) => {
+              const input = event.target.closest("input[name='project-filter']");
+              if (input) {
+                applyFilter(input.value);
+              }
             });
           }
         })();
@@ -3712,6 +3758,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
