@@ -2493,6 +2493,13 @@ def _bcpa_collect_property_data(address, city):
         prop_img_tag = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='/Photographs/']")))
         photo_url = prop_img_tag.get_attribute("src")
 
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        match = re.search(r"Adj\.?\s*Bldg\.?\s*S\.?F\.?\s*[:\s]*([\d,\.]+)", page_text, re.IGNORECASE)
+        if match:
+            ground_area = float(match.group(1).replace(",", ""))
+        else:
+            ground_area = 0
+
         sketch_file = os.path.join(BROWARD_OUTPUT_DIR, "sketch.png")
         existing_handles = driver.window_handles
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.btn-sketch"))).click()
@@ -2536,6 +2543,7 @@ def _bcpa_collect_property_data(address, city):
 
         return {
             "photo_url": photo_url,
+            "ground_area": ground_area,
             "sketch_text": sketch_text,
             "sketch_file": sketch_file,
             "map_file": map_file,
@@ -2875,7 +2883,7 @@ def generate_broward_estimate(address, city):
         bcpa_data = _bcpa_collect_property_data(address, cleaned_city)
 
     ground_area = _safe_float(bcpa_data.get("ground_area"), 0)
-    if ground_area <= 0:
+    if is_palm_beach and ground_area <= 0:
         try:
             ground_area = _extract_total_adj_area(bcpa_data.get("sketch_text", ""))
         except ValueError:
@@ -3771,6 +3779,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
