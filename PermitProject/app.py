@@ -141,7 +141,6 @@ def _extract_name_and_address(raw_job_name):
             r"(\d{1,6}[-\d]*\s+.*?\b[Ff][Ll]\b\.?\s*\d{5}(?:-\d{4})?)",
             normalized,
         )
-        https://claude.ai/code/session_017ujexvAJvvx7sZy5F5XcJV#:~:text=%2B-,%23%20Pattern%202b%3A%20Address%20ending%20with%20just%20a%20zip%20code%20(no%20FL,),-141
         # Pattern 2: Address with FL + zip but fewer commas  "123 Main St City FL 33065"
     if address_match:
         address = address_match.group(1).strip(" ,")
@@ -524,10 +523,24 @@ fake_properties = [make_property(i) for i in range(1, 51)]
 # ==========================================================
 USERS = {
     "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic"},
+    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan"},
     "sci":        {"password": "sci123",     "role": "client", "brand": "sci"},
     "roofing123": {"password": "roofing123", "role": "client", "brand": "generic"},
     "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie"},
 }
+
+# ==========================================================
+# EMAIL MANAGER DATA (in-memory, keyed by client username)
+# ==========================================================
+# Structure per client:
+#   { "lists": [ {"name": str, "emails": [str], "uploaded_at": str} ],
+#     "schedules": [ {"list_name": str, "scheduled_for": str, "subject": str, "status": str} ] }
+EMAIL_MANAGER_DATA = {}
+def _get_client_email_data(username):
+    """Return email manager data for a client, initialising if needed."""
+    if username not in EMAIL_MANAGER_DATA:
+        EMAIL_MANAGER_DATA[username] = {"lists": [], "schedules": []}
+    return EMAIL_MANAGER_DATA[username]
 
 # ==========================================================
 # JINJA TEMPLATES (inline, full UI)
@@ -1087,7 +1100,7 @@ app.jinja_loader = DictLoader({
     <body class="{{ body_class or '' }}">
         <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
           <div class="container-fluid">
-            <a class="navbar-brand" href="{% if session.get('brand') == 'sci' %}{{ url_for('sci_landing') }}{% else %}{{ url_for('dashboard') }}{% endif %}">Florida Sales Leads</a>
+            <a class="navbar-brand" href="{% if session.get('brand') == 'sci' %}{{ url_for('sci_landing') }}{% elif session.get('brand') == 'adminchan' %}{{ url_for('adminchan_dashboard') }}{% else %}{{ url_for('dashboard') }}{% endif %}">Florida Sales Leads</a>
             <div class="d-flex">
               {% if session.get('username') %}
                 <span class="navbar-text me-3">Hi, {{ session['username'] }}{% if session.get('role')=='admin' %} (Admin){% endif %}</span>
@@ -1293,6 +1306,7 @@ app.jinja_loader = DictLoader({
                       <option value="sci">sci</option>
                       <option value="generic">generic</option>
                       <option value="munsie">munsie</option>
+                      <option value="adminchan">adminchan</option>
                     </select>
                   </div>
                 </div>
@@ -2408,6 +2422,194 @@ app.jinja_loader = DictLoader({
             <button class="btn btn-success" name="save" value="1">Save Changes</button>
         </form>
       </div>
+    {% endblock %}
+    """,
+
+    # ---------- ADMINCHAN EMAIL MANAGER DASHBOARD ----------
+    "adminchan_dashboard.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <style>
+        .em-header {
+          background: linear-gradient(135deg, #1e293b, #334155);
+          color: #fff;
+          border-radius: 20px;
+          padding: 2rem 2.5rem;
+          margin-bottom: 2rem;
+          box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+        }
+        .em-header h2 { font-weight: 700; margin-bottom: .25rem; }
+        .em-header p { color: rgba(255,255,255,.7); margin: 0; }
+        .client-card {
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+          margin-bottom: 1.5rem;
+          overflow: hidden;
+        }
+        .client-card-header {
+          background: linear-gradient(135deg, rgba(59, 130, 246, .08), rgba(14, 165, 233, .06));
+          padding: 1.25rem 1.5rem;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .client-card-header h5 { margin: 0; font-weight: 700; color: #0f172a; }
+        .client-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: .25rem .65rem;
+          border-radius: 999px;
+          font-size: .75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+        .badge-sci { background: rgba(249, 115, 22, .12); color: #c2410c; }
+        .badge-munsie { background: rgba(16, 185, 129, .12); color: #047857; }
+        .badge-generic { background: rgba(100, 116, 139, .12); color: #475569; }
+        .client-card-body { padding: 1.25rem 1.5rem; }
+        .em-section { margin-bottom: 1rem; }
+        .em-section-title {
+          font-size: .85rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .06em;
+          color: #64748b;
+          margin-bottom: .5rem;
+        }
+        .em-empty {
+          background: rgba(241, 245, 249, .6);
+          border: 2px dashed #cbd5e1;
+          border-radius: 12px;
+          padding: 1rem 1.25rem;
+          color: #94a3b8;
+          font-size: .9rem;
+          text-align: center;
+        }
+        .em-list-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .75rem 1rem;
+          margin-bottom: .5rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .em-list-item .list-name { font-weight: 600; color: #0f172a; }
+        .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
+        .schedule-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .75rem 1rem;
+          margin-bottom: .5rem;
+        }
+        .schedule-item .sched-subject { font-weight: 600; color: #0f172a; }
+        .schedule-item .sched-meta { font-size: .82rem; color: #64748b; }
+        .status-badge {
+          display: inline-block;
+          padding: .15rem .5rem;
+          border-radius: 999px;
+          font-size: .72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+        .status-pending { background: rgba(251, 191, 36, .15); color: #b45309; }
+        .status-sent { background: rgba(34, 197, 94, .15); color: #15803d; }
+        .status-draft { background: rgba(148, 163, 184, .15); color: #475569; }
+        .upload-zone {
+          border: 2px dashed #93c5fd;
+          border-radius: 12px;
+          padding: 1rem;
+          text-align: center;
+          background: rgba(59, 130, 246, .04);
+          cursor: pointer;
+          transition: border-color .2s, background .2s;
+        }
+        .upload-zone:hover {
+          border-color: #3b82f6;
+          background: rgba(59, 130, 246, .08);
+        }
+        .upload-zone input[type="file"] { display: none; }
+        .btn-em { border-radius: 10px; font-weight: 600; font-size: .85rem; }
+      </style>
+
+      <div class="em-header">
+        <h2>Email Manager</h2>
+        <p>Manage email lists and scheduling for all clients</p>
+      </div>
+
+      {% if not clients %}
+        <div class="em-empty" style="padding: 3rem;">
+          <h5 style="color: #64748b;">No clients found</h5>
+          <p>Add client accounts via the Admin panel to start managing their emails.</p>
+        </div>
+      {% endif %}
+
+      {% for client in clients %}
+        <div class="client-card">
+          <div class="client-card-header">
+            <div>
+              <h5>{{ client.username }}</h5>
+              <span class="client-badge badge-{{ client.brand }}">{{ client.brand }}</span>
+              <span style="font-size:.82rem; color:#64748b; margin-left:.5rem;">{{ client.role }}</span>
+            </div>
+            <div>
+              <button class="btn btn-sm btn-outline-primary btn-em" onclick="document.getElementById('upload-{{ client.username }}').click()">
+                Upload Excel List
+              </button>
+              <form method="post" action="{{ url_for('adminchan_upload_list', client_username=client.username) }}" enctype="multipart/form-data" style="display:inline;" id="form-upload-{{ client.username }}">
+                <input type="file" name="excel_file" id="upload-{{ client.username }}" accept=".xlsx,.xls,.csv"
+                       onchange="document.getElementById('form-upload-{{ client.username }}').submit()">
+              </form>
+            </div>
+          </div>
+          <div class="client-card-body">
+            <div class="em-section">
+              <div class="em-section-title">Email Lists</div>
+              {% if client.email_data.lists %}
+                {% for lst in client.email_data.lists %}
+                  <div class="em-list-item">
+                    <div>
+                      <span class="list-name">{{ lst.name }}</span>
+                      <span class="list-meta">&mdash; {{ lst.emails|length }} emails</span>
+                    </div>
+                    <div class="list-meta">Uploaded {{ lst.uploaded_at }}</div>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <div class="em-empty">No email lists yet. Upload an Excel sheet to get started.</div>
+              {% endif %}
+            </div>
+
+            <div class="em-section">
+              <div class="em-section-title">Scheduled Sends</div>
+              {% if client.email_data.schedules %}
+                {% for sched in client.email_data.schedules %}
+                  <div class="schedule-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <div>
+                        <span class="sched-subject">{{ sched.subject or 'Untitled' }}</span>
+                        <span class="sched-meta">&mdash; List: {{ sched.list_name }}</span>
+                      </div>
+                      <div>
+                        <span class="status-badge status-{{ sched.status|lower }}">{{ sched.status }}</span>
+                        <span class="sched-meta ms-2">{{ sched.scheduled_for or 'Not scheduled' }}</span>
+                      </div>
+                    </div>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <div class="em-empty">No scheduled sends. Schedules will appear here once configured.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
     {% endblock %}
     """,
 })
@@ -3582,6 +3784,8 @@ def home():
     if session.get("username"):
         if session.get("brand") == "sci":
             return redirect(url_for("sci_landing"))
+        if session.get("brand") == "adminchan":
+            return redirect(url_for("adminchan_dashboard"))
         return redirect(url_for("dashboard"))
     return render_template("landing.html", title="Florida Sales Leads", body_class="landing-page")
 
@@ -3598,6 +3802,8 @@ def login():
             flash("Logged in successfully.")
             if info["brand"] == "sci":
                 return redirect(url_for("sci_landing"))
+            if info["brand"] == "adminchan":
+                return redirect(url_for("adminchan_dashboard"))
             return redirect(url_for("dashboard"))
         flash("Invalid username or password.")
     # Give login page a special body class so only it uses the gradient & bigger logo
@@ -3902,6 +4108,80 @@ def edit_property(prop_id):
 
     return render_template("edit_property.html", prop=prop_view, title="Edit Property")
 
+# -------- Adminchan Email Manager --------
+@app.route("/adminchan")
+def adminchan_dashboard():
+    if not require_login():
+        return redirect(url_for("login"))
+    if current_brand() != "adminchan":
+        return redirect(url_for("dashboard"))
+
+    # Build list of all non-adminchan clients with their email data
+    clients = []
+    for uname, info in USERS.items():
+        if uname == session.get("username"):
+            continue  # skip self
+        clients.append({
+            "username": uname,
+            "brand": info["brand"],
+            "role": info["role"],
+            "email_data": _get_client_email_data(uname),
+        })
+
+    return render_template("adminchan_dashboard.html",
+                           title="Email Manager",
+                           clients=clients,
+                           body_class="")
+
+@app.route("/adminchan/upload/<client_username>", methods=["POST"])
+def adminchan_upload_list(client_username):
+    if not require_login() or current_brand() != "adminchan":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    if client_username not in USERS:
+        flash("Client not found.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    f = request.files.get("excel_file")
+    if not f or not f.filename:
+        flash("No file selected.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    fname = f.filename.lower()
+    try:
+        if fname.endswith(".csv"):
+            df = pd.read_csv(f)
+        else:
+            df = pd.read_excel(f)
+
+        # Try to find an email column
+        email_col = None
+        for col in df.columns:
+            if "email" in col.lower():
+                email_col = col
+                break
+
+        emails = []
+        if email_col:
+            emails = [str(v).strip() for v in df[email_col].dropna().tolist() if str(v).strip()]
+        else:
+            # Fallback: take first column as emails
+            emails = [str(v).strip() for v in df.iloc[:, 0].dropna().tolist() if str(v).strip()]
+
+        data = _get_client_email_data(client_username)
+        data["lists"].append({
+            "name": f.filename,
+            "emails": emails,
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        })
+        flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
+    except Exception as exc:
+        logger.exception("Excel upload failed")
+        flash(f"Failed to process file: {exc}")
+
+    return redirect(url_for("adminchan_dashboard"))
+
 # -------- Admin area --------
 @app.route("/admin")
 def admin_page():
@@ -3933,7 +4213,7 @@ def admin_add():
     if role not in ("admin","client"):
         flash("Invalid role.")
         return redirect(url_for("admin_page"))
-    if brand not in ("sci","generic","munsie"):
+    if brand not in ("sci","generic","munsie","adminchan"):
         flash("Invalid brand.")
         return redirect(url_for("admin_page"))
 
