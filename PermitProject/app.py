@@ -135,6 +135,7 @@ def _extract_name_and_address(raw_job_name):
     # Pattern 1: Full address with state + zip  "123 Main St, City, FL 33065"
     address_match = re.search(
         r"(\d{1,6}[-\d]*\s+[^,]+,\s*[^,]+,?\s*[Ff][Ll]\.?\s*\d{5}(?:-\d{4})?)",
+        normalized,
     )
     if not address_match:
         address_match = re.search(
@@ -4097,6 +4098,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
