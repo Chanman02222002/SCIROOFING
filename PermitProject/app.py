@@ -890,7 +890,9 @@ app.jinja_loader = DictLoader({
             .map-filter-option input {
                 position: absolute;
                 opacity: 0;
-                pointer-events: none;
+                width: 0;
+                height: 0;
+                overflow: hidden;
             }
             .map-filter-option label {
                 cursor: pointer;
@@ -1287,7 +1289,6 @@ app.jinja_loader = DictLoader({
           };
 
           const resultsContainer = document.getElementById("project-map-results");
-          const filterGroup = document.querySelector(".map-filter-pills");
           const filterInputs = document.querySelectorAll("input[name='project-filter']");
           const markerById = new Map();
           const cardById = new Map();
@@ -1444,6 +1445,16 @@ app.jinja_loader = DictLoader({
 
             renderResults();
             applyFilter(activeFilter);
+
+            document.querySelectorAll(".map-filter-option label").forEach((label) => {
+              label.addEventListener("click", () => {
+                const input = document.getElementById(label.getAttribute("for"));
+                if (input) {
+                  input.checked = true;
+                  applyFilter(input.value);
+                }
+              });
+            });
           };
 
           if (projectTab) {
@@ -1476,14 +1487,7 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          if (filterGroup && filterInputs.length) {
-            filterGroup.addEventListener("change", (event) => {
-              const input = event.target.closest("input[name='project-filter']");
-              if (input) {
-                applyFilter(input.value);
-              }
-            });
-          }
+          
         })();
       </script>
     {% endblock %}
@@ -3779,6 +3783,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
