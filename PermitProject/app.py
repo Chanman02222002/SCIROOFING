@@ -121,22 +121,47 @@ def _extract_name_and_address(raw_job_name):
     if not raw:
         return "", ""
 
+    # Multi-line entries: first line is project name, remaining lines are address
     lines = [line.strip(" ,") for line in raw.splitlines() if line and line.strip()]
     if len(lines) >= 2:
         project_name = lines[0].strip()
-        address_line = " ".join(lines[1:3]).strip(" ,")
+        address_line = ", ".join(lines[1:]).strip(" ,")
         if any(ch.isdigit() for ch in address_line):
             return project_name, address_line
 
     normalized = re.sub(r"\s+", " ", raw)
+
+    _STREET_SUFFIXES = r"(?:St(?:reet)?|Ave(?:nue)?|Dr(?:ive)?|Blvd|Rd|Road|Way|Ln|Lane|Pl(?:ace)?|Ct|Court|Terr(?:ace)?|Cir(?:cle)?|Trail|Pkwy|Hwy)"
+
+    # Pattern 1: Full address with state + zip  "123 Main St, City, FL 33065"
     address_match = re.search(
-        r"(\d{1,6}\s+[^,]+,\s*[^,]+,\s*F[Ll]\.?\s*\d{5}(?:-\d{4})?)",
+        r"(\d{1,6}[-\d]*\s+[^,]+,\s*[^,]+,?\s*[Ff][Ll]\.?\s*\d{5}(?:-\d{4})?)",
         normalized,
     )
+    # Pattern 2: Address with FL + zip but fewer commas  "123 Main St City FL 33065"
     if not address_match:
         address_match = re.search(
-            r"(\d{1,6}\s+.*?\bF[Ll]\b\.?\s*\d{5}(?:-\d{4})?)",
+            r"(\d{1,6}[-\d]*\s+.*?\b[Ff][Ll]\b\.?\s*\d{5}(?:-\d{4})?)",
             normalized,
+        )
+    # Pattern 2b: Address ending with just a zip code (no FL) "319 NE 14 Ave Hallandale Beach 33009"
+    if not address_match:
+        address_match = re.search(
+            r"(\d{1,6}[-\d]*\s+.*?" + _STREET_SUFFIXES + r"\.?\b.*?\b\d{5}(?:-\d{4})?)",
+            normalized, re.IGNORECASE,
+        )
+    # Pattern 3: Address with street number + known suffix, city, FL (no zip)
+    if not address_match:
+        address_match = re.search(
+            r"(\d{1,6}[-\d]*\s+.*?" + _STREET_SUFFIXES + r"\.?\b.*?,\s*[Ff][Ll]\.?(?:\s*\d{5})?)",
+            normalized, re.IGNORECASE,
+        )
+    # Pattern 4: "Name  123 Street Address" (address starts mid-string with a street number)
+    #            followed by a city name (even without FL/zip)
+    if not address_match:
+        address_match = re.search(
+            r"(\d{1,6}[-\d]*\s+(?:\S+\s+){0,4}" + _STREET_SUFFIXES + r"\.?\b.*)",
+            normalized, re.IGNORECASE,
         )
 
     if address_match:
@@ -155,6 +180,42 @@ SCI_GEOCODE_MAX_CALLS = int(os.environ.get("SCI_GEOCODE_MAX_CALLS", "200"))
 
 
 _geocode_last_call_time = 0
+
+
+def _normalize_address_for_geocoding(address):
+    """Clean up an address string for better geocoding results."""
+    query = _s(address)
+    if not query:
+        return query
+    # Expand common abbreviations that confuse geocoders
+    abbrevs = {
+        r'\bFt\.?\s': 'Fort ',
+        r'\bSt\.\s': 'Street ',
+        r'\bDr\.\s': 'Drive ',
+        r'\bAve\.\s': 'Avenue ',
+        r'\bBlvd\.\s': 'Boulevard ',
+        r'\bRd\.\s': 'Road ',
+        r'\bLn\.\s': 'Lane ',
+        r'\bCt\.\s': 'Court ',
+        r'\bPl\.\s': 'Place ',
+        r'\bN\s': 'North ',
+        r'\bS\s': 'South ',
+        r'\bE\s': 'East ',
+        r'\bW\s': 'West ',
+        r'\bNE\s': 'NE ',
+        r'\bNW\s': 'NW ',
+        r'\bSE\s': 'SE ',
+        r'\bSW\s': 'SW ',
+        r'\bSt\s*Rd\b': 'State Road',
+    }
+    for pattern, replacement in abbrevs.items():
+        query = re.sub(pattern, replacement, query, count=1)
+    # Strip double+ spaces
+    query = re.sub(r'\s{2,}', ' ', query).strip()
+    # Ensure Florida hint is present
+    if not re.search(r'\bFL\b', query, re.IGNORECASE) and not re.search(r'\bFlorida\b', query, re.IGNORECASE):
+        query = f"{query}, Florida"
+    return query
 
 
 def _geocode_address(address):
@@ -178,10 +239,7 @@ def _geocode_address(address):
     if elapsed < 1.1:
         time.sleep(1.1 - elapsed)
 
-    # Append state hint if not already present for better geocoding accuracy
-    query = key
-    if not re.search(r'\bFL\b', query, re.IGNORECASE) and not re.search(r'\bFlorida\b', query, re.IGNORECASE):
-        query = f"{query}, FL"
+    query = _normalize_address_for_geocoding(key)
 
     encoded = urllib.parse.quote(query)
     url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&addressdetails=1&limit=1"
@@ -207,36 +265,124 @@ def _geocode_address(address):
 
 def _estimate_coords(address, project_type):
     city_centers = {
+        # Broward County
         "fort lauderdale": (26.1224, -80.1373),
         "ft. lauderdale": (26.1224, -80.1373),
+        "ft lauderdale": (26.1224, -80.1373),
         "coral springs": (26.2712, -80.2706),
         "sunrise": (26.1669, -80.2564),
         "hollywood": (26.0112, -80.1495),
         "pompano beach": (26.2379, -80.1248),
-        "boca raton": (26.3683, -80.1289),
         "weston": (26.1004, -80.3998),
         "tamarac": (26.2129, -80.2498),
         "parkland": (26.31, -80.2373),
         "cooper city": (26.0573, -80.271),
-        "miami beach": (25.7907, -80.1300),
-        "north miami": (25.8901, -80.1867),
+        "pembroke pines": (26.0131, -80.3414),
+        "miramar": (25.9860, -80.3032),
+        "davie": (26.0765, -80.2521),
+        "plantation": (26.1276, -80.2331),
+        "lauderhill": (26.1669, -80.2136),
+        "deerfield beach": (26.3185, -80.0998),
+        "deerfield": (26.3185, -80.0998),
+        "lauderdale-by-the-sea": (26.1926, -80.0956),
+        "hallandale beach": (25.9812, -80.1484),
+        "hallandale": (25.9812, -80.1484),
+        "oakland park": (26.1722, -80.1524),
+        "margate": (26.2445, -80.2069),
+        "coconut creek": (26.2517, -80.1791),
+        "lighthouse point": (26.2753, -80.0874),
+        "wilton manors": (26.1598, -80.1378),
+        "north lauderdale": (26.2175, -80.2258),
+        "southwest ranches": (26.0567, -80.3484),
+        "lazy lake": (26.1613, -80.2347),
+        "sea ranch lakes": (26.2080, -80.0956),
+        "dania beach": (26.0573, -80.1440),
+        # Palm Beach County
+        "boca raton": (26.3683, -80.1289),
         "boynton beach": (26.5318, -80.0905),
         "lantana": (26.5828, -80.0514),
         "palm beach gardens": (26.8234, -80.1387),
+        "west palm beach": (26.7153, -80.0534),
+        "delray beach": (26.4615, -80.0728),
+        "lake worth": (26.6170, -80.0557),
+        "palm springs": (26.6357, -80.0968),
+        "greenacres": (26.6276, -80.1251),
+        "jupiter": (26.9342, -80.0942),
+        "royal palm beach": (26.7084, -80.2302),
+        "wellington": (26.6618, -80.2414),
+        "riviera beach": (26.7753, -80.0580),
+        "palm beach": (26.7056, -80.0364),
+        "jensen beach": (27.2547, -80.2298),
+        # Miami-Dade County
+        "miami beach": (25.7907, -80.1300),
+        "miami": (25.7617, -80.1918),
+        "north miami": (25.8901, -80.1867),
+        "north miami beach": (25.9331, -80.1623),
         "key largo": (25.0865, -80.4473),
         "homestead": (25.4687, -80.4776),
+        "pinecrest": (25.6651, -80.3082),
+        "aventura": (25.9565, -80.1392),
+        "hialeah": (25.8576, -80.2781),
+        "coral gables": (25.7215, -80.2684),
+        "key biscayne": (25.6938, -80.1628),
     }
     base_lat, base_lng = 26.125, -80.21
     address_lower = _s(address).lower()
-    for city, center in city_centers.items():
+    # Sort by longest city name first so "north miami beach" matches before "miami"
+    for city, center in sorted(city_centers.items(), key=lambda x: -len(x[0])):
         if city in address_lower:
             base_lat, base_lng = center
             break
 
+    # Use a very small offset so estimated pins stay close to city center
     digest = hashlib.md5(f"{project_type}:{address_lower}".encode("utf-8")).hexdigest()
-    lat_offset = (int(digest[:4], 16) / 65535.0 - 0.5) * 0.012
-    lng_offset = (int(digest[4:8], 16) / 65535.0 - 0.5) * 0.012
+    lat_offset = (int(digest[:4], 16) / 65535.0 - 0.5) * 0.004
+    lng_offset = (int(digest[4:8], 16) / 65535.0 - 0.5) * 0.004
     return [round(base_lat + lat_offset, 6), round(base_lng + lng_offset, 6)]
+
+
+_NON_PROJECT_PREFIXES = {
+    "total", "sub-total", "sub total", "subtotal", "grand total",
+    "projects in", "projects with", "projects delayed",
+    "commercial projects", "residential projects",
+}
+
+
+_KNOWN_CITIES = [
+    "fort lauderdale", "ft. lauderdale", "ft lauderdale", "coral springs",
+    "sunrise", "hollywood", "pompano beach", "boca raton", "weston",
+    "tamarac", "parkland", "cooper city", "pembroke pines", "miramar",
+    "davie", "plantation", "lauderhill", "deerfield beach", "deerfield",
+    "lauderdale-by-the-sea", "hallandale beach", "hallandale",
+    "oakland park", "margate", "coconut creek", "lighthouse point",
+    "wilton manors", "north lauderdale", "southwest ranches",
+    "dania beach", "boynton beach", "lantana", "palm beach gardens",
+    "west palm beach", "delray beach", "lake worth", "palm springs",
+    "greenacres", "jupiter", "royal palm beach", "wellington",
+    "riviera beach", "palm beach", "jensen beach", "miami beach",
+    "miami", "north miami beach", "north miami", "key largo",
+    "homestead", "pinecrest", "aventura", "hialeah", "coral gables",
+    "key biscayne",
+]
+_KNOWN_CITIES_SORTED = sorted(_KNOWN_CITIES, key=len, reverse=True)
+
+
+def _extract_city_from_address(address):
+    """Extract a city name from an address string, trying multiple patterns."""
+    # Pattern 1: "..., City, FL ..." (city between two commas before FL)
+    m = re.search(r",\s*([^,]+),\s*[Ff][Ll]\b", address)
+    if m:
+        return m.group(1).strip()
+    # Pattern 2: Match against known South Florida city names (most reliable)
+    addr_lower = address.lower()
+    for city in _KNOWN_CITIES_SORTED:
+        if city in addr_lower:
+            return city.title()
+    # Pattern 3: Last resort — grab the word(s) immediately before ", FL"
+    m = re.search(r"(\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*,\s*[Ff][Ll]\b", address)
+    if m:
+        return m.group(1).strip()
+    return "Florida"
 
 
 def load_sci_project_locations(filepath):
@@ -256,7 +402,12 @@ def load_sci_project_locations(filepath):
 
         for _, row in df.iterrows():
             raw_job_name = _s(row.get("Job Name"))
-            if not raw_job_name or raw_job_name.lower().startswith("total"):
+            if not raw_job_name:
+                continue
+
+            # Skip header/subtotal/summary rows
+            lower = raw_job_name.lower().strip()
+            if any(lower.startswith(p) for p in _NON_PROJECT_PREFIXES):
                 continue
 
             project_name, address = _extract_name_and_address(raw_job_name)
@@ -265,8 +416,7 @@ def load_sci_project_locations(filepath):
             if not address:
                 continue
 
-            city_match = re.search(r",\s*([^,]+),\s*F[Ll]", address)
-            city = city_match.group(1).strip() if city_match else "Florida"
+            city = _extract_city_from_address(address)
             status = _s(row.get("Project Status")) or _s(row.get("Repair Status")) or _s(row.get("Maint. Status"))
 
             base_id = _slugify(f"{project_type}-{project_name}-{address}")
@@ -3691,17 +3841,7 @@ def add_sci_spot():
         spot_type = "Residential" if residential else "Commercial"
 
     location_id = _slugify(address)
-    city = ""
-    addr_lower = address.lower()
-    for city_name in [
-        "fort lauderdale", "ft. lauderdale", "coral springs", "sunrise",
-        "hollywood", "pompano beach", "boca raton", "weston", "tamarac",
-        "parkland", "cooper city", "miami beach", "north miami",
-        "boynton beach", "lantana", "palm beach gardens", "key largo", "homestead",
-    ]:
-        if city_name in addr_lower:
-            city = city_name.title()
-            break
+    city = _extract_city_from_address(address)
 
     coords = _geocode_address(address) or _estimate_coords(address, spot_type)
 
