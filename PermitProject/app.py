@@ -1287,7 +1287,6 @@ app.jinja_loader = DictLoader({
           };
 
           const resultsContainer = document.getElementById("project-map-results");
-          const filterGroup = document.querySelector(".map-filter-pills");
           const filterInputs = document.querySelectorAll("input[name='project-filter']");
           const markerById = new Map();
           const cardById = new Map();
@@ -1476,14 +1475,14 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          if (filterGroup && filterInputs.length) {
-            filterGroup.addEventListener("change", (event) => {
-              const input = event.target.closest("input[name='project-filter']");
-              if (input) {
-                applyFilter(input.value);
-              }
+          document.querySelectorAll(".map-filter-option").forEach((option) => {
+            const input = option.querySelector("input[name='project-filter']");
+            if (!input) return;
+            option.addEventListener("click", () => {
+              input.checked = true;
+              applyFilter(input.value);
             });
-          }
+          });
         })();
       </script>
     {% endblock %}
