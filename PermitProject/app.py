@@ -149,13 +149,16 @@ def _extract_name_and_address(raw_job_name):
 
 _geocode_cache = {}
 _geocode_calls = 0
-ENABLE_SCI_GEOCODING = os.environ.get("SCI_ENABLE_GEOCODING", "").strip().lower() in {"1", "true", "yes", "on"}
-SCI_GEOCODE_TIMEOUT_SECONDS = float(os.environ.get("SCI_GEOCODE_TIMEOUT_SECONDS", "1.5"))
-SCI_GEOCODE_MAX_CALLS = int(os.environ.get("SCI_GEOCODE_MAX_CALLS", "10"))
+ENABLE_SCI_GEOCODING = os.environ.get("SCI_ENABLE_GEOCODING", "true").strip().lower() in {"1", "true", "yes", "on"}
+SCI_GEOCODE_TIMEOUT_SECONDS = float(os.environ.get("SCI_GEOCODE_TIMEOUT_SECONDS", "5"))
+SCI_GEOCODE_MAX_CALLS = int(os.environ.get("SCI_GEOCODE_MAX_CALLS", "200"))
+
+
+_geocode_last_call_time = 0
 
 
 def _geocode_address(address):
-    global _geocode_calls
+    global _geocode_calls, _geocode_last_call_time
 
     if not ENABLE_SCI_GEOCODING:
         return None
@@ -169,14 +172,26 @@ def _geocode_address(address):
         _geocode_cache[key] = None
         return None
 
-    encoded = urllib.parse.quote(key)
-    url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit=1"
+    # Nominatim usage policy requires max 1 request per second
+    now = time.time()
+    elapsed = now - _geocode_last_call_time
+    if elapsed < 1.1:
+        time.sleep(1.1 - elapsed)
+
+    # Append state hint if not already present for better geocoding accuracy
+    query = key
+    if not re.search(r'\bFL\b', query, re.IGNORECASE) and not re.search(r'\bFlorida\b', query, re.IGNORECASE):
+        query = f"{query}, FL"
+
+    encoded = urllib.parse.quote(query)
+    url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&addressdetails=1&limit=1"
     request_obj = urllib.request.Request(
         url,
         headers={"User-Agent": "SCIROOFING/1.0 (project-map)"},
     )
     try:
         _geocode_calls += 1
+        _geocode_last_call_time = time.time()
         with urllib.request.urlopen(request_obj, timeout=SCI_GEOCODE_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if payload:
@@ -219,8 +234,8 @@ def _estimate_coords(address, project_type):
             break
 
     digest = hashlib.md5(f"{project_type}:{address_lower}".encode("utf-8")).hexdigest()
-    lat_offset = (int(digest[:4], 16) / 65535.0 - 0.5) * 0.04
-    lng_offset = (int(digest[4:8], 16) / 65535.0 - 0.5) * 0.04
+    lat_offset = (int(digest[:4], 16) / 65535.0 - 0.5) * 0.012
+    lng_offset = (int(digest[4:8], 16) / 65535.0 - 0.5) * 0.012
     return [round(base_lat + lat_offset, 6), round(base_lng + lng_offset, 6)]
 
 
