@@ -890,7 +890,9 @@ app.jinja_loader = DictLoader({
             .map-filter-option input {
                 position: absolute;
                 opacity: 0;
-                pointer-events: none;
+                width: 0;
+                height: 0;
+                overflow: hidden;
             }
             .map-filter-option label {
                 cursor: pointer;
@@ -1443,6 +1445,16 @@ app.jinja_loader = DictLoader({
 
             renderResults();
             applyFilter(activeFilter);
+
+            document.querySelectorAll(".map-filter-option label").forEach((label) => {
+              label.addEventListener("click", () => {
+                const input = document.getElementById(label.getAttribute("for"));
+                if (input) {
+                  input.checked = true;
+                  applyFilter(input.value);
+                }
+              });
+            });
           };
 
           if (projectTab) {
@@ -1475,14 +1487,6 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          document.querySelectorAll(".map-filter-option").forEach((option) => {
-            const input = option.querySelector("input[name='project-filter']");
-            if (!input) return;
-            option.addEventListener("click", () => {
-              input.checked = true;
-              applyFilter(input.value);
-            });
-          });
         })();
       </script>
     {% endblock %}
