@@ -135,6 +135,7 @@ def _extract_name_and_address(raw_job_name):
     # Pattern 1: Full address with state + zip  "123 Main St, City, FL 33065"
     address_match = re.search(
         r"(\d{1,6}[-\d]*\s+[^,]+,\s*[^,]+,?\s*[Ff][Ll]\.?\s*\d{5}(?:-\d{4})?)",
+        normalized,
     )
     if not address_match:
         address_match = re.search(
