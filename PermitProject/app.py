@@ -1,6 +1,7 @@
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, session, flash, send_file, abort, send_from_directory, render_template_string
+    url_for, session, flash, send_file, abort, send_from_directory, render_template_string,
+    jsonify
 )
 import os
 import random
@@ -100,6 +101,7 @@ SCI_PROJECT_SHEETS = {
     "Repairs": "Repairs",
     "Maintenance": "Maintenance",
 }
+SCI_CUSTOM_SPOTS_FILE = os.path.join(BASE_DIR, "data", "sci_custom_spots.json")
 
 
 def _s(val):
@@ -281,7 +283,24 @@ def get_sci_project_locations():
     if _sci_projects_cache is None:
         _sci_projects_cache = load_sci_project_locations(SCI_TRACKING_FILE_PATH)
         logger.info("Loaded %s SCI map projects", len(_sci_projects_cache))
-    return _sci_projects_cache
+    return _sci_projects_cache + _load_custom_spots()
+
+
+def _load_custom_spots():
+    if not os.path.exists(SCI_CUSTOM_SPOTS_FILE):
+        return []
+    try:
+        with open(SCI_CUSTOM_SPOTS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        logger.debug("Failed to load custom spots", exc_info=True)
+        return []
+
+
+def _save_custom_spots(spots):
+    os.makedirs(os.path.dirname(SCI_CUSTOM_SPOTS_FILE), exist_ok=True)
+    with open(SCI_CUSTOM_SPOTS_FILE, "w") as f:
+        json.dump(spots, f, indent=2)
 
 
 def load_munsie_properties(filepath):
@@ -1235,6 +1254,7 @@ app.jinja_loader = DictLoader({
                   <div class="col-lg-4">
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
                       <div class="fw-semibold">Listings</div>
+                      <button type="button" class="btn btn-sm btn-primary" id="add-spot-btn" style="border-radius:999px;font-size:.82rem;font-weight:700;padding:.35rem .85rem;">+ Add Spot</button>
                       <div class="map-filter-pills" role="radiogroup" aria-label="Filter projects">
                         <div class="map-filter-option">
                           <input type="radio" id="project-filter-all" name="project-filter" value="All" checked>
@@ -1256,6 +1276,42 @@ app.jinja_loader = DictLoader({
                           <input type="radio" id="project-filter-maintenance" name="project-filter" value="Maintenance">
                           <label for="project-filter-maintenance">Maintenance</label>
                         </div>
+                      </div>
+                    </div>
+                    <div id="add-spot-form" class="d-none mb-3">
+                      <div class="map-result-card" style="border:2px solid #2563eb;">
+                        <div class="fw-semibold mb-2">Add New Spot</div>
+                        <div class="mb-2">
+                          <label for="spot-address" class="form-label small fw-semibold mb-1">Address</label>
+                          <input type="text" class="form-control form-control-sm" id="spot-address" placeholder="e.g. 1234 Main St, Coral Springs, FL 33065" required>
+                        </div>
+                        <div class="mb-2">
+                          <label for="spot-status" class="form-label small fw-semibold mb-1">Status</label>
+                          <select class="form-select form-select-sm" id="spot-status">
+                            <option value="New">New</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Pending">Pending</option>
+                          </select>
+                        </div>
+                        <div class="mb-2">
+                          <label class="form-label small fw-semibold mb-1">Type</label>
+                          <div class="d-flex gap-3">
+                            <div class="form-check">
+                              <input class="form-check-input" type="radio" name="spot-residential" id="spot-type-yes" value="yes" checked>
+                              <label class="form-check-label small" for="spot-type-yes">Residential</label>
+                            </div>
+                            <div class="form-check">
+                              <input class="form-check-input" type="radio" name="spot-residential" id="spot-type-no" value="no">
+                              <label class="form-check-label small" for="spot-type-no">Commercial</label>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="d-flex gap-2 mt-3">
+                          <button type="button" class="btn btn-primary btn-sm" id="spot-submit" style="border-radius:999px;font-weight:700;">Save Spot</button>
+                          <button type="button" class="btn btn-outline-secondary btn-sm" id="spot-cancel" style="border-radius:999px;font-weight:700;">Cancel</button>
+                        </div>
+                        <div id="spot-feedback" class="small mt-2"></div>
                       </div>
                     </div>
                     <div class="map-results" id="project-map-results"></div>
@@ -1399,13 +1455,12 @@ app.jinja_loader = DictLoader({
                 card.dataset.locationId = location._locationKey;
                 const legendClass = `legend-${(location.type || "").toString().toLowerCase()}`;
                 card.innerHTML = `
-                  <div class="fw-semibold">${location.name}</div>
+                  <div class="fw-semibold">${location.address || "No address"}</div>
                   <span>
                     <span class="legend-dot ${legendClass}"></span>
                     ${location.type} · ${location.city}
                   </span>
-                  <div class="text-muted small mt-1">${location.address || ""}</div>
-                  <div class="text-muted small">Status: ${location.status || "Unknown"}</div>
+                  <div class="text-muted small mt-1">Status: ${location.status || "Unknown"}</div>
                 `;
                 card.addEventListener("click", () => {
                   setActiveLocation(location._locationKey, {
@@ -1435,7 +1490,7 @@ app.jinja_loader = DictLoader({
               const color = iconColors[location.type] || "#0ea5e9";
               const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(mapInstance);
               marker.bindPopup(
-                `<strong>${location.name}</strong><br>${location.type} · ${location.city}<br>${location.address || ""}<br>Status: ${location.status || "Unknown"}`
+                `<strong>${location.address || "No address"}</strong><br>${location.type} · ${location.city}<br>Status: ${location.status || "Unknown"}`
               );
               marker.on("click", () => {
                 setActiveLocation(location._locationKey, { scroll: true, openPopup: false });
@@ -1456,6 +1511,84 @@ app.jinja_loader = DictLoader({
               });
             });
           };
+
+          /* ---- Add New Spot ---- */
+          const addSpotBtn = document.getElementById("add-spot-btn");
+          const addSpotForm = document.getElementById("add-spot-form");
+          const spotCancel = document.getElementById("spot-cancel");
+          const spotSubmit = document.getElementById("spot-submit");
+          const spotFeedback = document.getElementById("spot-feedback");
+
+          if (addSpotBtn && addSpotForm) {
+            addSpotBtn.addEventListener("click", () => {
+              addSpotForm.classList.toggle("d-none");
+            });
+            spotCancel.addEventListener("click", () => {
+              addSpotForm.classList.add("d-none");
+              spotFeedback.textContent = "";
+            });
+            spotSubmit.addEventListener("click", async () => {
+              const address = document.getElementById("spot-address").value.trim();
+              const status = document.getElementById("spot-status").value;
+              const isResidential = document.getElementById("spot-type-yes").checked;
+              const spotType = isResidential ? "Residential" : "Commercial";
+
+              if (!address) {
+                spotFeedback.textContent = "Please enter an address.";
+                spotFeedback.style.color = "#dc2626";
+                return;
+              }
+
+              spotSubmit.disabled = true;
+              spotFeedback.textContent = "Saving...";
+              spotFeedback.style.color = "#475569";
+
+              try {
+                const resp = await fetch("/api/sci/spots", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ address, status, type: spotType, residential: isResidential }),
+                });
+                const result = await resp.json();
+                if (!resp.ok) {
+                  spotFeedback.textContent = result.error || "Failed to save.";
+                  spotFeedback.style.color = "#dc2626";
+                  return;
+                }
+
+                /* Add the new spot to the local data and map */
+                const newLocation = { ...result, _locationKey: result.id || `custom-${keyedLocations.length}` };
+                keyedLocations.push(newLocation);
+
+                if (mapInstance) {
+                  const color = iconColors[newLocation.type] || "#0ea5e9";
+                  const marker = L.marker(newLocation.coords, { icon: buildIcon(color) }).addTo(mapInstance);
+                  marker.bindPopup(
+                    `<strong>${newLocation.address || "No address"}</strong><br>${newLocation.type} · ${newLocation.city}<br>Status: ${newLocation.status || "Unknown"}`
+                  );
+                  marker.on("click", () => {
+                    setActiveLocation(newLocation._locationKey, { scroll: true, openPopup: false });
+                  });
+                  markerById.set(newLocation._locationKey, marker);
+                }
+
+                renderResults();
+                applyFilter(activeFilter);
+
+                /* Reset form */
+                document.getElementById("spot-address").value = "";
+                document.getElementById("spot-status").value = "New";
+                document.getElementById("spot-type-yes").checked = true;
+                addSpotForm.classList.add("d-none");
+                spotFeedback.textContent = "";
+              } catch (err) {
+                spotFeedback.textContent = "Network error. Please try again.";
+                spotFeedback.style.color = "#dc2626";
+              } finally {
+                spotSubmit.disabled = false;
+              }
+            });
+          }
 
           if (projectTab) {
             projectTab.addEventListener("show.bs.tab", (event) => {
@@ -1487,7 +1620,7 @@ app.jinja_loader = DictLoader({
             }
           }
 
-          
+
         })();
       </script>
     {% endblock %}
@@ -3521,6 +3654,58 @@ def dashboard():
         template = "generic_dashboard.html"
 
     return render_template(template, title="Permit Database", **ctx, **extra_context)
+
+@app.route("/api/sci/spots", methods=["POST"])
+def add_sci_spot():
+    if not require_login():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    address = (data.get("address") or "").strip()
+    status = (data.get("status") or "").strip()
+    spot_type = (data.get("type") or "").strip()
+    residential = data.get("residential", True)
+
+    if not address:
+        return jsonify({"error": "Address is required"}), 400
+
+    valid_types = {"Residential", "Commercial", "Repairs", "Maintenance"}
+    if spot_type not in valid_types:
+        spot_type = "Residential" if residential else "Commercial"
+
+    location_id = _slugify(address)
+    city = ""
+    addr_lower = address.lower()
+    for city_name in [
+        "fort lauderdale", "ft. lauderdale", "coral springs", "sunrise",
+        "hollywood", "pompano beach", "boca raton", "weston", "tamarac",
+        "parkland", "cooper city", "miami beach", "north miami",
+        "boynton beach", "lantana", "palm beach gardens", "key largo", "homestead",
+    ]:
+        if city_name in addr_lower:
+            city = city_name.title()
+            break
+
+    coords = _geocode_address(address) or _estimate_coords(address, spot_type)
+
+    spot = {
+        "id": location_id,
+        "name": "",
+        "type": spot_type,
+        "address": address,
+        "city": city,
+        "status": status or "New",
+        "coords": coords,
+    }
+
+    spots = _load_custom_spots()
+    spots.append(spot)
+    _save_custom_spots(spots)
+
+    global _sci_projects_cache
+    _sci_projects_cache = None
+
+    return jsonify(spot), 201
 
 @app.route("/property/<int:prop_id>", methods=["GET","POST"])
 def edit_property(prop_id):
