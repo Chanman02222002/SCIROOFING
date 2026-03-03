@@ -1420,7 +1420,7 @@ app.jinja_loader = DictLoader({
                 />
                 <h5 class="mb-2">Project Map</h5>
                 <div class="alert alert-light border mb-3" role="alert">
-                  <div class="small text-muted mb-1">Embed link (read-only map for external websites)</div>
+                  <div class="small text-muted mb-1">Embed link (full map UI with filters + listings)</div>
                   <input type="text" class="form-control form-control-sm" value="{{ sci_embed_url }}" readonly>
                 </div>
                 <div class="row g-4">
@@ -1823,22 +1823,112 @@ app.jinja_loader = DictLoader({
       <title>SCI Project Map</title>
       <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
       <style>
-        html, body { margin:0; padding:0; height:100%; font-family:Arial,sans-serif; }
+        html, body { margin:0; padding:0; height:100%; font-family:Arial,sans-serif; color:#0f172a; }
+        *, *::before, *::after { box-sizing:border-box; }
+        .embed-shell { height:100%; width:100%; display:flex; background:#f8fafc; }
+        .map-column { flex:1; min-width:0; position:relative; }
         #project-map { height:100%; width:100%; }
+        .sidebar {
+          width:340px;
+          max-width:42vw;
+          background:#fff;
+          border-left:1px solid #e2e8f0;
+          padding:14px;
+          overflow:auto;
+        }
+        .heading { font-size:1rem; font-weight:700; margin-bottom:8px; }
+        .subtext { font-size:.78rem; color:#64748b; margin-bottom:12px; }
+        .map-filter-pills { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+        .map-filter-option input { position:absolute; opacity:0; pointer-events:none; }
+        .map-filter-option label {
+          display:inline-block;
+          border:1px solid #cbd5e1;
+          border-radius:999px;
+          padding:.28rem .72rem;
+          font-size:.74rem;
+          font-weight:700;
+          color:#334155;
+          cursor:pointer;
+          user-select:none;
+          transition:all .18s ease;
+        }
+        .map-filter-option input:checked + label { border-color:#2563eb; background:#eff6ff; color:#1d4ed8; }
+        .map-results { display:grid; gap:8px; }
+        .map-result-card { border:1px solid #e2e8f0; border-radius:12px; padding:10px; cursor:pointer; background:#fff; }
+        .map-result-card.active { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.15); }
+        .map-result-card strong { display:block; font-size:.88rem; margin-bottom:3px; }
+        .map-result-card span { display:block; font-size:.76rem; color:#334155; }
+        .map-result-card .muted { font-size:.72rem; color:#64748b; margin-top:3px; }
+        .legend {
+          position:absolute;
+          left:10px;
+          bottom:10px;
+          z-index:500;
+          background:rgba(255,255,255,.95);
+          border:1px solid #e2e8f0;
+          border-radius:10px;
+          padding:7px 9px;
+          display:flex;
+          flex-wrap:wrap;
+          gap:8px;
+          font-size:.7rem;
+          font-weight:700;
+        }
+        .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; }
+        @media (max-width: 900px) {
+          .embed-shell { flex-direction:column; }
+          .sidebar { width:100%; max-width:none; max-height:44%; border-left:none; border-top:1px solid #e2e8f0; }
+        }
       </style>
     </head>
     <body>
-      <div id="project-map" aria-label="SCI project map"></div>
+      <div class="embed-shell">
+        <div class="map-column">
+          <div id="project-map" aria-label="SCI project map"></div>
+          <div class="legend">
+            <span><span class="dot" style="background:#2563eb"></span>Residential</span>
+            <span><span class="dot" style="background:#f97316"></span>Commercial</span>
+            <span><span class="dot" style="background:#16a34a"></span>Repairs</span>
+            <span><span class="dot" style="background:#8b5cf6"></span>Maintenance</span>
+          </div>
+        </div>
+        {% if embed_mode != "lite" %}
+        <aside class="sidebar">
+          <div class="heading">Property Listings</div>
+          <div class="subtext">Filter projects and click a listing to focus the map marker.</div>
+          <div class="map-filter-pills" role="radiogroup" aria-label="Filter projects">
+            <div class="map-filter-option"><input type="radio" id="project-filter-all" name="project-filter" value="All" checked><label for="project-filter-all">All</label></div>
+            <div class="map-filter-option"><input type="radio" id="project-filter-residential" name="project-filter" value="Residential"><label for="project-filter-residential">Residential</label></div>
+            <div class="map-filter-option"><input type="radio" id="project-filter-commercial" name="project-filter" value="Commercial"><label for="project-filter-commercial">Commercial</label></div>
+            <div class="map-filter-option"><input type="radio" id="project-filter-repairs" name="project-filter" value="Repairs"><label for="project-filter-repairs">Repairs</label></div>
+            <div class="map-filter-option"><input type="radio" id="project-filter-maintenance" name="project-filter" value="Maintenance"><label for="project-filter-maintenance">Maintenance</label></div>
+          </div>
+          <div class="map-results" id="project-map-results"></div>
+        </aside>
+        {% endif %}
+      </div>
       <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
       <script>
         (function () {
           const projectLocations = {{ sci_project_locations|tojson }};
+          const embedMode = {{ embed_mode|tojson }};
           const iconColors = {
             Residential: "#2563eb",
             Commercial: "#f97316",
             Repairs: "#16a34a",
             Maintenance: "#8b5cf6",
           };
+
+          const resultsContainer = document.getElementById("project-map-results");
+          const markerById = new Map();
+          const cardById = new Map();
+          let activeFilter = "All";
+          let activeLocationId = null;
+
+          const keyedLocations = (projectLocations || []).map((location, index) => ({
+            ...location,
+            _locationKey: location.id || `project-${index}`,
+          }));
 
           const buildIcon = (color) => L.divIcon({
             className: "",
@@ -1854,19 +1944,90 @@ app.jinja_loader = DictLoader({
           }).addTo(map);
 
           const bounds = [];
-          (projectLocations || []).forEach((location) => {
+          keyedLocations.forEach((location) => {
             if (!Array.isArray(location.coords) || location.coords.length !== 2) {
               return;
             }
             const color = iconColors[location.type] || "#0ea5e9";
             const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(map);
             marker.bindPopup(`<strong>${location.address || "No address"}</strong><br>${location.type || "Project"} · ${location.city || ""}<br>Status: ${location.status || "Unknown"}`);
+            marker.on("click", () => {
+              setActiveLocation(location._locationKey, { scroll: true, openPopup: false });
+            });
+            markerById.set(location._locationKey, marker);
             bounds.push(location.coords);
           });
 
           if (bounds.length) {
             map.fitBounds(bounds, { padding: [20, 20] });
           }
+
+          const getVisibleLocations = () => {
+            if (activeFilter === "All") return keyedLocations;
+            return keyedLocations.filter((location) => location.type === activeFilter);
+          };
+
+          const setActiveLocation = (locationId, options = {}) => {
+            activeLocationId = locationId;
+            cardById.forEach((card, key) => card.classList.toggle("active", key === locationId));
+            if (options.openPopup) {
+              const marker = markerById.get(locationId);
+              if (marker) marker.openPopup();
+            }
+            if (options.scroll) {
+              cardById.get(locationId)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          };
+
+          const applyFilter = (nextFilter) => {
+            activeFilter = nextFilter;
+            const visibleIds = new Set(getVisibleLocations().map((location) => location._locationKey));
+            markerById.forEach((marker, key) => {
+              if (visibleIds.has(key)) {
+                marker.addTo(map);
+              } else {
+                map.removeLayer(marker);
+              }
+            });
+            if (embedMode !== "lite") {
+              renderResults();
+            }
+          };
+
+          const renderResults = () => {
+            if (!resultsContainer) return;
+            resultsContainer.innerHTML = "";
+            cardById.clear();
+            getVisibleLocations().forEach((location) => {
+              const card = document.createElement("button");
+              card.type = "button";
+              card.className = "map-result-card";
+              card.innerHTML = `<strong>${location.address || "No address"}</strong><span>${location.type || "Project"} · ${location.city || "Unknown city"}</span><div class="muted">Status: ${location.status || "Unknown"}</div>`;
+              card.addEventListener("click", () => {
+                setActiveLocation(location._locationKey, { openPopup: true, scroll: false });
+                if (Array.isArray(location.coords)) {
+                  map.setView(location.coords, 12.5, { animate: true });
+                }
+              });
+              resultsContainer.appendChild(card);
+              cardById.set(location._locationKey, card);
+            });
+          };
+
+          if (embedMode !== "lite") {
+            document.querySelectorAll(".map-filter-option label").forEach((label) => {
+              label.addEventListener("click", () => {
+                const input = document.getElementById(label.getAttribute("for"));
+                if (input) {
+                  input.checked = true;
+                  applyFilter(input.value);
+                }
+              });
+            });
+            renderResults();
+          }
+
+          applyFilter("All");
         })();
       </script>
     </body>
@@ -4103,7 +4264,9 @@ def sci_map_embed():
     token = request.args.get("token", "")
     if not _is_valid_sci_embed_token(token):
         return abort(403)
-    return render_template("sci_map_embed.html", sci_project_locations=get_sci_project_locations())
+    mode = (request.args.get("mode", "full") or "full").lower()
+    embed_mode = mode if mode in {"full", "lite"} else "full"
+    return render_template("sci_map_embed.html", sci_project_locations=get_sci_project_locations(), embed_mode=embed_mode)
     
 @app.route("/api/sci/spots", methods=["POST"])
 def add_sci_spot():
@@ -4485,6 +4648,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
