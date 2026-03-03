@@ -17,6 +17,7 @@ import logging
 import pandas as pd
 import re
 import hashlib
+import hmac
 import base64
 import html
 import requests
@@ -102,7 +103,7 @@ SCI_PROJECT_SHEETS = {
     "Maintenance": "Maintenance",
 }
 SCI_CUSTOM_SPOTS_FILE = os.path.join(BASE_DIR, "data", "sci_custom_spots.json")
-
+SCI_EMBED_TOKEN_TTL_SECONDS = int(os.environ.get("SCI_EMBED_TOKEN_TTL_SECONDS", str(60 * 60 * 24 * 30)))
 
 def _s(val):
     """Stringify a value safely (handle NaN / None)."""
@@ -114,6 +115,33 @@ def _s(val):
 def _slugify(text):
     slug = re.sub(r"[^a-z0-9]+", "-", _s(text).lower()).strip("-")
     return slug or "project"
+
+def _build_sci_embed_token(expires_at=None):
+    if expires_at is None:
+        expires_at = int(time.time()) + SCI_EMBED_TOKEN_TTL_SECONDS
+    payload = str(int(expires_at))
+    signature = hmac.new(
+        app.secret_key.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _is_valid_sci_embed_token(token):
+    if not token or "." not in token:
+        return False
+    expires_raw, provided_sig = token.split(".", 1)
+    if not expires_raw.isdigit():
+        return False
+    expected_sig = hmac.new(
+        app.secret_key.encode("utf-8"),
+        expires_raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(provided_sig, expected_sig):
+        return False
+    return int(expires_raw) >= int(time.time())
 
 
 def _extract_name_and_address(raw_job_name):
@@ -1390,7 +1418,11 @@ app.jinja_loader = DictLoader({
                   integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
                   crossorigin=""
                 />
-                <h5 class="mb-3">Project Map</h5>
+                <h5 class="mb-2">Project Map</h5>
+                <div class="alert alert-light border mb-3" role="alert">
+                  <div class="small text-muted mb-1">Embed link (read-only map for external websites)</div>
+                  <input type="text" class="form-control form-control-sm" value="{{ sci_embed_url }}" readonly>
+                </div>
                 <div class="row g-4">
                   <div class="col-lg-8">
                     <div class="map-shell">
@@ -1782,6 +1814,65 @@ app.jinja_loader = DictLoader({
     {% endblock %}
     """,
 
+    "sci_map_embed.html": """
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>SCI Project Map</title>
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+      <style>
+        html, body { margin:0; padding:0; height:100%; font-family:Arial,sans-serif; }
+        #project-map { height:100%; width:100%; }
+      </style>
+    </head>
+    <body>
+      <div id="project-map" aria-label="SCI project map"></div>
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+      <script>
+        (function () {
+          const projectLocations = {{ sci_project_locations|tojson }};
+          const iconColors = {
+            Residential: "#2563eb",
+            Commercial: "#f97316",
+            Repairs: "#16a34a",
+            Maintenance: "#8b5cf6",
+          };
+
+          const buildIcon = (color) => L.divIcon({
+            className: "",
+            html: `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2);"></span>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          });
+
+          const map = L.map("project-map", { scrollWheelZoom: false }).setView([26.125, -80.210], 10.5);
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 18,
+            attribution: "&copy; OpenStreetMap contributors",
+          }).addTo(map);
+
+          const bounds = [];
+          (projectLocations || []).forEach((location) => {
+            if (!Array.isArray(location.coords) || location.coords.length !== 2) {
+              return;
+            }
+            const color = iconColors[location.type] || "#0ea5e9";
+            const marker = L.marker(location.coords, { icon: buildIcon(color) }).addTo(map);
+            marker.bindPopup(`<strong>${location.address || "No address"}</strong><br>${location.type || "Project"} · ${location.city || ""}<br>Status: ${location.status || "Unknown"}`);
+            bounds.push(location.coords);
+          });
+
+          if (bounds.length) {
+            map.fitBounds(bounds, { padding: [20, 20] });
+          }
+        })();
+      </script>
+    </body>
+    </html>
+    """,
+    
     # ---------- SCI LANDING ----------
     "sci_landing.html": """
     {% extends "base.html" %}
@@ -3998,17 +4089,29 @@ def dashboard():
     if brand == "sci":
         template = "sci_dashboard.html"
         extra_context["sci_project_locations"] = get_sci_project_locations()
+        sci_token = _build_sci_embed_token()
+        extra_context["sci_embed_url"] = url_for("sci_map_embed", token=sci_token, _external=True)
     elif brand == "munsie":
         template = "munsie_dashboard.html"
     else:
         template = "generic_dashboard.html"
 
     return render_template(template, title="Permit Database", **ctx, **extra_context)
+
+@app.route("/sci/map/embed")
+def sci_map_embed():
+    token = request.args.get("token", "")
+    if not _is_valid_sci_embed_token(token):
+        return abort(403)
+    return render_template("sci_map_embed.html", sci_project_locations=get_sci_project_locations())
     
 @app.route("/api/sci/spots", methods=["POST"])
 def add_sci_spot():
     if not require_login():
         return jsonify({"error": "Unauthorized"}), 401
+    if current_brand() != "sci":
+        return jsonify({"error": "Forbidden"}), 403
+        
 
     data = request.get_json(silent=True) or {}
     address = (data.get("address") or "").strip()
@@ -4382,6 +4485,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
