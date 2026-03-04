@@ -50,7 +50,7 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "apikey" if SENDGRID_API_KEY else "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", SENDGRID_API_KEY)
-SMTP_FROM_EMAIL = "chandler@floridasalesleads.com"
+SMTP_FROM_EMAIL = "Shawn@sciroof.com"
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -1859,6 +1859,47 @@ app.jinja_loader = DictLoader({
         .map-result-card strong { display:block; font-size:.88rem; margin-bottom:3px; }
         .map-result-card span { display:block; font-size:.76rem; color:#334155; }
         .map-result-card .muted { font-size:.72rem; color:#64748b; margin-top:3px; }
+        .legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; vertical-align:middle; }
+        .legend-residential { background:#2563eb; }
+        .legend-commercial { background:#f97316; }
+        .legend-repairs { background:#dc2626; }
+        .legend-maintenance { background:#059669; }
+        .custom-map-pin { width:24px; height:32px; position:relative; }
+        .custom-map-pin .pin-core {
+          position:absolute;
+          left:50%;
+          top:2px;
+          width:18px;
+          height:18px;
+          background:var(--pin-color);
+          border-radius:50%;
+          transform:translateX(-50%);
+          border:2px solid #fff;
+          box-shadow:0 6px 16px rgba(15,23,42,.25);
+        }
+        .custom-map-pin .pin-core::after {
+          content:"";
+          position:absolute;
+          left:50%;
+          bottom:-9px;
+          width:14px;
+          height:14px;
+          background:var(--pin-color);
+          transform:translateX(-50%) rotate(45deg);
+          border-radius:2px;
+          box-shadow:0 6px 12px rgba(15,23,42,.2);
+        }
+        .custom-map-pin .pin-core::before {
+          content:"";
+          position:absolute;
+          left:50%;
+          top:50%;
+          width:6px;
+          height:6px;
+          background:#fff;
+          border-radius:50%;
+          transform:translate(-50%,-50%);
+        }
         .legend {
           position:absolute;
           left:10px;
@@ -1888,8 +1929,8 @@ app.jinja_loader = DictLoader({
           <div class="legend">
             <span><span class="dot" style="background:#2563eb"></span>Residential</span>
             <span><span class="dot" style="background:#f97316"></span>Commercial</span>
-            <span><span class="dot" style="background:#16a34a"></span>Repairs</span>
-            <span><span class="dot" style="background:#8b5cf6"></span>Maintenance</span>
+            <span><span class="dot" style="background:#dc2626"></span>Repairs</span>
+            <span><span class="dot" style="background:#059669"></span>Maintenance</span>
           </div>
         </div>
         {% if embed_mode != "lite" %}
@@ -1915,10 +1956,9 @@ app.jinja_loader = DictLoader({
           const iconColors = {
             Residential: "#2563eb",
             Commercial: "#f97316",
-            Repairs: "#16a34a",
-            Maintenance: "#8b5cf6",
+            Repairs: "#dc2626",
+            Maintenance: "#059669",
           };
-
           const resultsContainer = document.getElementById("project-map-results");
           const markerById = new Map();
           const cardById = new Map();
@@ -1931,10 +1971,10 @@ app.jinja_loader = DictLoader({
           }));
 
           const buildIcon = (color) => L.divIcon({
-            className: "",
-            html: `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2);"></span>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7],
+            className: "custom-map-pin",
+            html: `<span class="pin-core" style="--pin-color:${color};"></span>`,
+            iconSize: [24, 32],
+            iconAnchor: [12, 30],
           });
 
           const map = L.map("project-map", { scrollWheelZoom: false }).setView([26.125, -80.210], 10.5);
@@ -1999,10 +2039,11 @@ app.jinja_loader = DictLoader({
             resultsContainer.innerHTML = "";
             cardById.clear();
             getVisibleLocations().forEach((location) => {
+              const legendClass = `legend-${(location.type || "").toString().toLowerCase()}`;
               const card = document.createElement("button");
               card.type = "button";
               card.className = "map-result-card";
-              card.innerHTML = `<strong>${location.address || "No address"}</strong><span>${location.type || "Project"} · ${location.city || "Unknown city"}</span><div class="muted">Status: ${location.status || "Unknown"}</div>`;
+              card.innerHTML = `<strong>${location.address || "No address"}</strong><span><span class="legend-dot ${legendClass}"></span>${location.type || "Project"} · ${location.city || "Unknown city"}</span><div class="muted">Status: ${location.status || "Unknown"}</div>`;
               card.addEventListener("click", () => {
                 setActiveLocation(location._locationKey, { openPopup: true, scroll: false });
                 if (Array.isArray(location.coords)) {
@@ -4648,6 +4689,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
