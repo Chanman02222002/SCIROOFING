@@ -2916,7 +2916,6 @@ app.jinja_loader = DictLoader({
       {% endfor %}
     {% endblock %}
     """,   
-})
 
 
     # ---------- JOBSDIRECT DASHBOARD ----------
@@ -3049,7 +3048,7 @@ app.jinja_loader = DictLoader({
       </div>
     {% endblock %}
     """,
-
+})
 
 # ==========================================================
 # UTILS / BRAND HELPERS
@@ -4909,6 +4908,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
