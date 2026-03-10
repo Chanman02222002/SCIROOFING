@@ -557,6 +557,12 @@ USERS = {
     "sci":        {"password": "sci123",     "role": "client", "brand": "sci"},
     "roofing123": {"password": "roofing123", "role": "client", "brand": "generic"},
     "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie"},
+    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect"},
+}
+
+# Per-brand SMTP sender overrides (brand -> from email)
+BRAND_FROM_EMAIL = {
+    "jobsdirect": "choffman@becastaffing.com",
 }
 
 # ==========================================================
@@ -1337,6 +1343,7 @@ app.jinja_loader = DictLoader({
                       <option value="generic">generic</option>
                       <option value="munsie">munsie</option>
                       <option value="adminchan">adminchan</option>
+                      <option value="jobsdirect">jobsdirect</option>
                     </select>
                   </div>
                 </div>
@@ -2766,6 +2773,7 @@ app.jinja_loader = DictLoader({
         .badge-sci { background: rgba(249, 115, 22, .12); color: #c2410c; }
         .badge-munsie { background: rgba(16, 185, 129, .12); color: #047857; }
         .badge-generic { background: rgba(100, 116, 139, .12); color: #475569; }
+        .badge-jobsdirect { background: rgba(124, 58, 237, .12); color: #6d28d9; }
         .client-card-body { padding: 1.25rem 1.5rem; }
         .em-section { margin-bottom: 1rem; }
         .em-section-title {
@@ -2908,7 +2916,138 @@ app.jinja_loader = DictLoader({
       {% endfor %}
     {% endblock %}
     """,
-    
+
+    # ---------- JOBSDIRECT DASHBOARD ----------
+    "jobsdirect_dashboard.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <style>
+        .jd-header {
+          background: linear-gradient(135deg, #7c3aed, #4f46e5);
+          color: #fff;
+          border-radius: 20px;
+          padding: 2rem 2.5rem;
+          margin-bottom: 2rem;
+          box-shadow: 0 20px 50px rgba(79, 70, 229, 0.2);
+        }
+        .jd-header h2 { font-weight: 700; margin-bottom: .25rem; }
+        .jd-header p { color: rgba(255,255,255,.7); margin: 0; }
+        .jd-card {
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+          margin-bottom: 1.5rem;
+          padding: 1.5rem 2rem;
+        }
+        .jd-card h5 { font-weight: 700; color: #0f172a; margin-bottom: 1rem; }
+        .jd-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+        .jd-stat {
+          background: linear-gradient(135deg, rgba(124, 58, 237, .06), rgba(79, 70, 229, .08));
+          border-radius: 14px;
+          padding: 1.25rem 1.5rem;
+          flex: 1; min-width: 160px;
+          text-align: center;
+        }
+        .jd-stat .num { font-size: 2rem; font-weight: 800; color: #4f46e5; }
+        .jd-stat .label { font-size: .82rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+        .jd-sent-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .75rem 1rem;
+          margin-bottom: .5rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .jd-sent-item .sent-to { font-weight: 600; color: #0f172a; }
+        .jd-sent-item .sent-meta { font-size: .82rem; color: #64748b; }
+        .jd-status-ok { color: #15803d; font-weight: 700; font-size: .8rem; }
+        .jd-status-fail { color: #dc2626; font-weight: 700; font-size: .8rem; }
+        .jd-empty {
+          background: rgba(241, 245, 249, .6);
+          border: 2px dashed #cbd5e1;
+          border-radius: 12px;
+          padding: 1.25rem;
+          color: #94a3b8;
+          font-size: .9rem;
+          text-align: center;
+        }
+      </style>
+
+      <div class="jd-header">
+        <h2>JobsDirect Email Dashboard</h2>
+        <p>Send emails from {{ from_email }} &mdash; logged in as <strong>{{ username }}</strong></p>
+      </div>
+
+      <div class="jd-stats">
+        <div class="jd-stat">
+          <div class="num">{{ sent_log|length }}</div>
+          <div class="label">Emails Sent</div>
+        </div>
+        <div class="jd-stat">
+          <div class="num">{{ sent_log|selectattr('status', 'equalto', 'OK')|list|length }}</div>
+          <div class="label">Delivered</div>
+        </div>
+        <div class="jd-stat">
+          <div class="num">{{ sent_log|selectattr('status', 'equalto', 'FAILED')|list|length }}</div>
+          <div class="label">Failed</div>
+        </div>
+      </div>
+
+      <!-- Compose Email -->
+      <div class="jd-card">
+        <h5>Compose Email</h5>
+        <form method="post" action="{{ url_for('jobsdirect_send') }}">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">To (email address)</label>
+              <input type="email" name="to_email" class="form-control" placeholder="recipient@example.com" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Subject</label>
+              <input type="text" name="subject" class="form-control" placeholder="Email subject" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Message Body</label>
+              <textarea name="body" class="form-control" rows="8" placeholder="Type your email message here..." required></textarea>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary mt-3" style="border-radius:10px; font-weight:600;">
+            Send Email
+          </button>
+          <span class="text-muted ms-2" style="font-size:.85rem;">Sends from {{ from_email }}</span>
+        </form>
+      </div>
+
+      <!-- Sent Log -->
+      <div class="jd-card">
+        <h5>Sent Emails</h5>
+        {% if sent_log %}
+          {% for item in sent_log|reverse %}
+            <div class="jd-sent-item">
+              <div>
+                <span class="sent-to">{{ item.to }}</span>
+                <span class="sent-meta">&mdash; {{ item.subject }}</span>
+              </div>
+              <div>
+                {% if item.status == 'OK' %}
+                  <span class="jd-status-ok">SENT</span>
+                {% else %}
+                  <span class="jd-status-fail">FAILED</span>
+                {% endif %}
+                <span class="sent-meta ms-2">{{ item.sent_at }}</span>
+              </div>
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="jd-empty">No emails sent yet. Use the form above to compose and send.</div>
+        {% endif %}
+      </div>
+    {% endblock %}
+    """,
+
 })
 
 # ==========================================================
@@ -4082,7 +4221,9 @@ def home():
         if session.get("brand") == "sci":
             return redirect(url_for("sci_landing"))
         if session.get("brand") == "adminchan":
-            return redirect(url_for("adminchan_dashboard"))   
+            return redirect(url_for("adminchan_dashboard"))
+        if session.get("brand") == "jobsdirect":
+            return redirect(url_for("jobsdirect_dashboard"))
         return redirect(url_for("dashboard"))
     return render_template("landing.html", title="Florida Sales Leads", body_class="landing-page")
 
@@ -4100,7 +4241,9 @@ def login():
             if info["brand"] == "sci":
                 return redirect(url_for("sci_landing"))
             if info["brand"] == "adminchan":
-                return redirect(url_for("adminchan_dashboard"))    
+                return redirect(url_for("adminchan_dashboard"))
+            if info["brand"] == "jobsdirect":
+                return redirect(url_for("jobsdirect_dashboard"))
             return redirect(url_for("dashboard"))
         flash("Invalid username or password.")
     # Give login page a special body class so only it uses the gradient & bigger logo
@@ -4419,6 +4562,82 @@ def edit_property(prop_id):
 
     return render_template("edit_property.html", prop=prop_view, title="Edit Property")
 
+# -------- JobsDirect Email Dashboard --------
+JOBSDIRECT_SENT_LOG = []  # in-memory sent-email log
+
+@app.route("/jobsdirect")
+def jobsdirect_dashboard():
+    if not require_login():
+        return redirect(url_for("login"))
+    if current_brand() != "jobsdirect":
+        return redirect(url_for("dashboard"))
+
+    from_email = BRAND_FROM_EMAIL.get("jobsdirect", SMTP_FROM_EMAIL)
+    return render_template("jobsdirect_dashboard.html",
+                           title="JobsDirect Dashboard",
+                           from_email=from_email,
+                           username=session.get("username"),
+                           sent_log=JOBSDIRECT_SENT_LOG,
+                           body_class="")
+
+@app.route("/jobsdirect/send", methods=["POST"])
+def jobsdirect_send():
+    if not require_login() or current_brand() != "jobsdirect":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    to_email = (request.form.get("to_email") or "").strip()
+    subject = (request.form.get("subject") or "").strip()
+    body = (request.form.get("body") or "").strip()
+
+    if not to_email or not subject or not body:
+        flash("All fields (to, subject, body) are required.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    from_email = BRAND_FROM_EMAIL.get("jobsdirect", SMTP_FROM_EMAIL)
+    sent_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_email
+        msg["To"] = to_email
+        msg.set_content(body)
+
+        # Also add an HTML version (simple inline formatting, no external templates)
+        html_body = f"""\
+<html>
+<body style="font-family: Arial, Helvetica, sans-serif; color: #1e293b; line-height: 1.6; padding: 20px;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #4f46e5; margin-bottom: 4px;">{subject}</h2>
+    <hr style="border: none; border-top: 2px solid #e2e8f0; margin: 12px 0 20px;">
+    <div style="white-space: pre-wrap;">{body}</div>
+    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0 12px;">
+    <p style="font-size: 12px; color: #94a3b8;">Sent by JobsDirect &mdash; {from_email}</p>
+  </div>
+</body>
+</html>"""
+        msg.add_alternative(html_body, subtype="html")
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            smtp.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+
+        JOBSDIRECT_SENT_LOG.append({
+            "to": to_email, "subject": subject, "status": "OK", "sent_at": sent_at,
+        })
+        flash(f"Email sent to {to_email}.")
+    except Exception as exc:
+        logger.exception("JobsDirect email send failed")
+        JOBSDIRECT_SENT_LOG.append({
+            "to": to_email, "subject": subject, "status": "FAILED", "sent_at": sent_at,
+        })
+        flash(f"Failed to send email: {exc}")
+
+    return redirect(url_for("jobsdirect_dashboard"))
+
 # -------- Adminchan Email Manager --------
 @app.route("/adminchan")
 def adminchan_dashboard():
@@ -4525,7 +4744,7 @@ def admin_add():
     if role not in ("admin","client"):
         flash("Invalid role.")
         return redirect(url_for("admin_page"))
-    if brand not in ("sci","generic","munsie","adminchan"):
+    if brand not in ("sci","generic","munsie","adminchan","jobsdirect"):
         flash("Invalid brand.")
         return redirect(url_for("admin_page"))
 
