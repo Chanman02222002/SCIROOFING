@@ -51,6 +51,7 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "apikey" if SENDGRID_API_KEY else "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", SENDGRID_API_KEY)
 SMTP_FROM_EMAIL = "Shawn@sciroof.com"
+JOBSDIRECT_FROM_EMAIL = "choffman@becastaffing.com"
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -554,6 +555,7 @@ fake_properties = [make_property(i) for i in range(1, 51)]
 USERS = {
     "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic"},
     "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan"},
+    "jobsdirect": {"password": "icecream2",  "role": "admin",  "brand": "jobsdirect"},
     "sci":        {"password": "sci123",     "role": "client", "brand": "sci"},
     "roofing123": {"password": "roofing123", "role": "client", "brand": "generic"},
     "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie"},
@@ -1337,6 +1339,7 @@ app.jinja_loader = DictLoader({
                       <option value="generic">generic</option>
                       <option value="munsie">munsie</option>
                       <option value="adminchan">adminchan</option>
+                      <option value="jobsdirect">jobsdirect</option>
                     </select>
                   </div>
                 </div>
@@ -2908,7 +2911,228 @@ app.jinja_loader = DictLoader({
       {% endfor %}
     {% endblock %}
     """,
-    
+
+    # ---------- JOBSDIRECT DASHBOARD ----------
+    "jobsdirect_dashboard.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <style>
+        .em-header {
+          background: linear-gradient(135deg, #0f766e, #14b8a6);
+          color: #fff;
+          border-radius: 20px;
+          padding: 2rem 2.5rem;
+          margin-bottom: 2rem;
+          box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
+        }
+        .em-header h2 { font-weight: 700; margin-bottom: .25rem; }
+        .em-header p { color: rgba(255,255,255,.7); margin: 0; }
+        .em-header .from-email { color: rgba(255,255,255,.9); font-weight: 600; font-size: .95rem; }
+        .client-card {
+          background: #fff;
+          border-radius: 16px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+          margin-bottom: 1.5rem;
+          overflow: hidden;
+        }
+        .client-card-header {
+          background: linear-gradient(135deg, rgba(20, 184, 166, .08), rgba(13, 148, 136, .06));
+          padding: 1.25rem 1.5rem;
+          border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .client-card-header h5 { margin: 0; font-weight: 700; color: #0f172a; }
+        .client-badge {
+          display: inline-flex;
+          align-items: center;
+          padding: .25rem .65rem;
+          border-radius: 999px;
+          font-size: .75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .04em;
+        }
+        .badge-sci { background: rgba(249, 115, 22, .12); color: #c2410c; }
+        .badge-munsie { background: rgba(16, 185, 129, .12); color: #047857; }
+        .badge-generic { background: rgba(100, 116, 139, .12); color: #475569; }
+        .badge-adminchan { background: rgba(59, 130, 246, .12); color: #1d4ed8; }
+        .badge-jobsdirect { background: rgba(20, 184, 166, .12); color: #0f766e; }
+        .client-card-body { padding: 1.25rem 1.5rem; }
+        .em-section { margin-bottom: 1rem; }
+        .em-section-title {
+          font-size: .85rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .06em;
+          color: #64748b;
+          margin-bottom: .5rem;
+        }
+        .em-empty {
+          background: rgba(241, 245, 249, .6);
+          border: 2px dashed #cbd5e1;
+          border-radius: 12px;
+          padding: 1rem 1.25rem;
+          color: #94a3b8;
+          font-size: .9rem;
+          text-align: center;
+        }
+        .em-list-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .75rem 1rem;
+          margin-bottom: .5rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .em-list-item .list-name { font-weight: 600; color: #0f172a; }
+        .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
+        .schedule-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .75rem 1rem;
+          margin-bottom: .5rem;
+        }
+        .schedule-item .sched-subject { font-weight: 600; color: #0f172a; }
+        .schedule-item .sched-meta { font-size: .82rem; color: #64748b; }
+        .status-badge {
+          display: inline-block;
+          padding: .15rem .5rem;
+          border-radius: 999px;
+          font-size: .72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+        .status-pending { background: rgba(251, 191, 36, .15); color: #b45309; }
+        .status-sent { background: rgba(34, 197, 94, .15); color: #15803d; }
+        .status-draft { background: rgba(148, 163, 184, .15); color: #475569; }
+        .upload-zone {
+          border: 2px dashed #5eead4;
+          border-radius: 12px;
+          padding: 1rem;
+          text-align: center;
+          background: rgba(20, 184, 166, .04);
+          cursor: pointer;
+          transition: border-color .2s, background .2s;
+        }
+        .upload-zone:hover {
+          border-color: #14b8a6;
+          background: rgba(20, 184, 166, .08);
+        }
+        .upload-zone input[type="file"] { display: none; }
+        .btn-em { border-radius: 10px; font-weight: 600; font-size: .85rem; }
+        .send-form { background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 12px; padding: 1rem 1.25rem; margin-top: .75rem; }
+        .send-form .form-label { font-weight: 600; font-size: .85rem; color: #0f766e; }
+      </style>
+
+      <div class="em-header">
+        <h2>JobsDirect Email Manager</h2>
+        <p>Manage email lists and send emails for all clients</p>
+        <div class="from-email mt-2">Sending from: choffman@becastaffing.com</div>
+      </div>
+
+      {% if not clients %}
+        <div class="em-empty" style="padding: 3rem;">
+          <h5 style="color: #64748b;">No clients found</h5>
+          <p>Add client accounts via the Admin panel to start managing their emails.</p>
+        </div>
+      {% endif %}
+
+      {% for client in clients %}
+        <div class="client-card">
+          <div class="client-card-header">
+            <div>
+              <h5>{{ client.username }}</h5>
+              <span class="client-badge badge-{{ client.brand }}">{{ client.brand }}</span>
+              <span style="font-size:.82rem; color:#64748b; margin-left:.5rem;">{{ client.role }}</span>
+            </div>
+            <div>
+              <button class="btn btn-sm btn-outline-success btn-em" onclick="document.getElementById('jd-upload-{{ client.username }}').click()">
+                Upload Excel List
+              </button>
+              <form method="post" action="{{ url_for('jobsdirect_upload_list', client_username=client.username) }}" enctype="multipart/form-data" style="display:inline;" id="jd-form-upload-{{ client.username }}">
+                <input type="file" name="excel_file" id="jd-upload-{{ client.username }}" accept=".xlsx,.xls,.csv"
+                       onchange="document.getElementById('jd-form-upload-{{ client.username }}').submit()">
+              </form>
+            </div>
+          </div>
+          <div class="client-card-body">
+            <div class="em-section">
+              <div class="em-section-title">Email Lists</div>
+              {% if client.email_data.lists %}
+                {% for lst in client.email_data.lists %}
+                  <div class="em-list-item">
+                    <div>
+                      <span class="list-name">{{ lst.name }}</span>
+                      <span class="list-meta">&mdash; {{ lst.emails|length }} emails</span>
+                    </div>
+                    <div class="list-meta">Uploaded {{ lst.uploaded_at }}</div>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <div class="em-empty">No email lists yet. Upload an Excel sheet to get started.</div>
+              {% endif %}
+            </div>
+
+            {% if client.email_data.lists %}
+            <div class="em-section">
+              <div class="em-section-title">Send Email</div>
+              <div class="send-form">
+                <form method="post" action="{{ url_for('jobsdirect_send_email', client_username=client.username) }}">
+                  <div class="mb-2">
+                    <label class="form-label">Email List</label>
+                    <select name="list_name" class="form-select form-select-sm">
+                      {% for lst in client.email_data.lists %}
+                        <option value="{{ lst.name }}">{{ lst.name }} ({{ lst.emails|length }} emails)</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Subject</label>
+                    <input name="subject" class="form-control form-control-sm" required placeholder="Email subject line">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label">Body</label>
+                    <textarea name="body" class="form-control form-control-sm" rows="4" required placeholder="Email body text"></textarea>
+                  </div>
+                  <button class="btn btn-sm btn-success btn-em">Send from choffman@becastaffing.com</button>
+                </form>
+              </div>
+            </div>
+            {% endif %}
+
+            <div class="em-section">
+              <div class="em-section-title">Sent Emails</div>
+              {% if client.email_data.schedules %}
+                {% for sched in client.email_data.schedules %}
+                  <div class="schedule-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <div>
+                        <span class="sched-subject">{{ sched.subject or 'Untitled' }}</span>
+                        <span class="sched-meta">&mdash; List: {{ sched.list_name }}</span>
+                      </div>
+                      <div>
+                        <span class="status-badge status-{{ sched.status|lower }}">{{ sched.status }}</span>
+                        <span class="sched-meta ms-2">{{ sched.scheduled_for or 'Not scheduled' }}</span>
+                      </div>
+                    </div>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <div class="em-empty">No emails sent yet. Upload a list and compose an email to get started.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    {% endblock %}
+    """,
+
 })
 
 # ==========================================================
@@ -4082,7 +4306,9 @@ def home():
         if session.get("brand") == "sci":
             return redirect(url_for("sci_landing"))
         if session.get("brand") == "adminchan":
-            return redirect(url_for("adminchan_dashboard"))   
+            return redirect(url_for("adminchan_dashboard"))
+        if session.get("brand") == "jobsdirect":
+            return redirect(url_for("jobsdirect_dashboard"))
         return redirect(url_for("dashboard"))
     return render_template("landing.html", title="Florida Sales Leads", body_class="landing-page")
 
@@ -4100,7 +4326,9 @@ def login():
             if info["brand"] == "sci":
                 return redirect(url_for("sci_landing"))
             if info["brand"] == "adminchan":
-                return redirect(url_for("adminchan_dashboard"))    
+                return redirect(url_for("adminchan_dashboard"))
+            if info["brand"] == "jobsdirect":
+                return redirect(url_for("jobsdirect_dashboard"))
             return redirect(url_for("dashboard"))
         flash("Invalid username or password.")
     # Give login page a special body class so only it uses the gradient & bigger logo
@@ -4493,6 +4721,136 @@ def adminchan_upload_list(client_username):
 
     return redirect(url_for("adminchan_dashboard"))
 
+# -------- JobsDirect Email Manager --------
+@app.route("/jobsdirect")
+def jobsdirect_dashboard():
+    if not require_login():
+        return redirect(url_for("login"))
+    if current_brand() != "jobsdirect":
+        return redirect(url_for("dashboard"))
+
+    clients = []
+    for uname, info in USERS.items():
+        if uname == session.get("username"):
+            continue
+        clients.append({
+            "username": uname,
+            "brand": info["brand"],
+            "role": info["role"],
+            "email_data": _get_client_email_data(uname),
+        })
+
+    return render_template("jobsdirect_dashboard.html",
+                           title="JobsDirect Email Manager",
+                           clients=clients,
+                           body_class="")
+
+@app.route("/jobsdirect/upload/<client_username>", methods=["POST"])
+def jobsdirect_upload_list(client_username):
+    if not require_login() or current_brand() != "jobsdirect":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    if client_username not in USERS:
+        flash("Client not found.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    f = request.files.get("excel_file")
+    if not f or not f.filename:
+        flash("No file selected.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    fname = f.filename.lower()
+    try:
+        if fname.endswith(".csv"):
+            df = pd.read_csv(f)
+        else:
+            df = pd.read_excel(f)
+
+        email_col = None
+        for col in df.columns:
+            if "email" in col.lower():
+                email_col = col
+                break
+
+        emails = []
+        if email_col:
+            emails = [str(v).strip() for v in df[email_col].dropna().tolist() if str(v).strip()]
+        else:
+            emails = [str(v).strip() for v in df.iloc[:, 0].dropna().tolist() if str(v).strip()]
+
+        data = _get_client_email_data(client_username)
+        data["lists"].append({
+            "name": f.filename,
+            "emails": emails,
+            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        })
+        flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
+    except Exception as exc:
+        logger.exception("Excel upload failed")
+        flash(f"Failed to process file: {exc}")
+
+    return redirect(url_for("jobsdirect_dashboard"))
+
+@app.route("/jobsdirect/send/<client_username>", methods=["POST"])
+def jobsdirect_send_email(client_username):
+    if not require_login() or current_brand() != "jobsdirect":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    if client_username not in USERS:
+        flash("Client not found.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    subject = request.form.get("subject", "").strip()
+    body = request.form.get("body", "").strip()
+    list_name = request.form.get("list_name", "").strip()
+
+    if not subject or not body:
+        flash("Subject and body are required.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    data = _get_client_email_data(client_username)
+    target_list = None
+    for lst in data["lists"]:
+        if lst["name"] == list_name:
+            target_list = lst
+            break
+
+    if not target_list or not target_list["emails"]:
+        flash("No email list selected or list is empty.")
+        return redirect(url_for("jobsdirect_dashboard"))
+
+    sent_count = 0
+    fail_count = 0
+    for recipient in target_list["emails"]:
+        try:
+            msg = EmailMessage()
+            msg["Subject"] = subject
+            msg["From"] = JOBSDIRECT_FROM_EMAIL
+            msg["To"] = recipient
+            msg.set_content(body)
+
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp_conn:
+                smtp_conn.starttls()
+                if SMTP_USERNAME and SMTP_PASSWORD:
+                    smtp_conn.login(SMTP_USERNAME, SMTP_PASSWORD)
+                smtp_conn.send_message(msg)
+            sent_count += 1
+        except Exception as exc:
+            logger.exception(f"Failed sending to {recipient}")
+            fail_count += 1
+
+    data["schedules"].append({
+        "list_name": list_name,
+        "scheduled_for": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "subject": subject,
+        "status": "sent",
+    })
+
+    flash(f"Sent {sent_count} emails from {JOBSDIRECT_FROM_EMAIL}. {fail_count} failed.")
+    return redirect(url_for("jobsdirect_dashboard"))
+
 
 # -------- Admin area --------
 @app.route("/admin")
@@ -4525,7 +4883,7 @@ def admin_add():
     if role not in ("admin","client"):
         flash("Invalid role.")
         return redirect(url_for("admin_page"))
-    if brand not in ("sci","generic","munsie","adminchan"):
+    if brand not in ("sci","generic","munsie","adminchan","jobsdirect"):
         flash("Invalid brand.")
         return redirect(url_for("admin_page"))
 
