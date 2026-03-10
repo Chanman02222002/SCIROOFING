@@ -2915,9 +2915,7 @@ app.jinja_loader = DictLoader({
         </div>
       {% endfor %}
     {% endblock %}
-    """,   
-})
-
+    """,
 
     # ---------- JOBSDIRECT DASHBOARD ----------
     "jobsdirect_dashboard.html": """
@@ -3049,6 +3047,7 @@ app.jinja_loader = DictLoader({
       </div>
     {% endblock %}
     """,
+})
 
 
 # ==========================================================
