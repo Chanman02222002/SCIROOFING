@@ -1454,18 +1454,12 @@ app.jinja_loader = DictLoader({
               <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
-                  <option value="{{ loop.index0 }}">
+                  <option value="{{ loop.index0 }}"
+                    data-emails="{{ lst.emails | join('||') }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
                   </option>
                 {% endfor %}
               </select>
-              <script>
-                var blastListData = {
-                  {% for lst in email_lists %}
-                    "{{ loop.index0 }}": {{ lst.emails | tojson }},
-                  {% endfor %}
-                };
-              </script>
             </div>
           </div>
 
@@ -1596,56 +1590,34 @@ app.jinja_loader = DictLoader({
         var selectedEmails = new Set();
 
         function blastListChanged() {
-          try {
-            var sel = document.getElementById('blastListSelect');
-            var idx = sel.value;
-            var step2 = document.getElementById('step2Card');
-            var step3 = document.getElementById('step3Card');
-            var step4 = document.getElementById('step4Card');
-            if (!idx) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
-            console.log('blastListChanged: index=' + idx);
-            currentEmails = (blastListData && blastListData[idx]) ? blastListData[idx] : [];
-            console.log('blastListChanged: loaded ' + currentEmails.length + ' emails');
-            selectedEmails = new Set(currentEmails);
-            renderChips();
-            step2.style.display=''; step3.style.display=''; step4.style.display='';
-          } catch(e) {
-            console.error('blastListChanged error:', e);
-            alert('Error loading email list: ' + e.message);
-          }
+          var sel = document.getElementById('blastListSelect');
+          var opt = sel.options[sel.selectedIndex];
+          var step2 = document.getElementById('step2Card');
+          var step3 = document.getElementById('step3Card');
+          var step4 = document.getElementById('step4Card');
+          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+          var raw = opt.getAttribute('data-emails') || '';
+          currentEmails = raw ? raw.split('||') : [];
+          selectedEmails = new Set(currentEmails);
+          renderChips();
+          step2.style.display=''; step3.style.display=''; step4.style.display='';
         }
 
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
-          c.innerHTML = '<div class="text-muted">Loading ' + currentEmails.length + ' emails...</div>';
+          c.innerHTML = '';
+          currentEmails.forEach(function(em) {
+            var chip = document.createElement('span');
+            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+            chip.textContent = em;
+            chip.onclick = function() {
+              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+              this.classList.toggle('selected');
+              updateCount();
+            };
+            c.appendChild(chip);
+          });
           updateCount();
-          var batchSize = 200;
-          var idx = 0;
-          function renderBatch() {
-            if (idx === 0) c.innerHTML = '';
-            var frag = document.createDocumentFragment();
-            var end = Math.min(idx + batchSize, currentEmails.length);
-            for (var i = idx; i < end; i++) {
-              (function(em) {
-                var chip = document.createElement('span');
-                chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-                chip.textContent = em;
-                chip.onclick = function() {
-                  if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-                  this.classList.toggle('selected');
-                  updateCount();
-                };
-                frag.appendChild(chip);
-              })(currentEmails[i]);
-            }
-            c.appendChild(frag);
-            idx = end;
-            if (idx < currentEmails.length) {
-              setTimeout(renderBatch, 0);
-            }
-          }
-          if (currentEmails.length > 0) setTimeout(renderBatch, 0);
-          else c.innerHTML = '<div class="text-muted">No emails in this list.</div>';
         }
 
         function toggleAllEmails(selectAll) {
@@ -5086,13 +5058,14 @@ def _send_blast_email(to_email, subject, body_html, from_name=None):
         msg["To"] = to_email
         msg.set_content(re.sub("<[^>]+>", "", body_html))  # plain-text fallback
 
+        body_with_breaks = body_html.replace("\n", "<br>")
         html_body = f"""\
 <html>
 <body style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;line-height:1.6;padding:20px;">
   <div style="max-width:600px;margin:0 auto;">
     <h2 style="color:#2563eb;margin-bottom:4px;">{subject}</h2>
     <hr style="border:none;border-top:2px solid #e2e8f0;margin:12px 0 20px;">
-    <div>{body_html.replace(chr(10), '<br>')}</div>
+    <div>{body_with_breaks}</div>
     <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px;">
     <p style="font-size:12px;color:#94a3b8;">Sent via Email Blast Scheduler</p>
   </div>
@@ -5372,6 +5345,115 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
