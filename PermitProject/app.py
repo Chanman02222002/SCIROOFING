@@ -1454,12 +1454,18 @@ app.jinja_loader = DictLoader({
               <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
-                  <option value="{{ loop.index0 }}"
-                    data-emails="{{ lst.emails | join('||') }}">
+                  <option value="{{ loop.index0 }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
                   </option>
                 {% endfor %}
               </select>
+              <script>
+                var blastListData = {
+                  {% for lst in email_lists %}
+                    "{{ loop.index0 }}": {{ lst.emails | tojson }},
+                  {% endfor %}
+                };
+              </script>
             </div>
           </div>
 
@@ -1590,34 +1596,56 @@ app.jinja_loader = DictLoader({
         var selectedEmails = new Set();
 
         function blastListChanged() {
-          var sel = document.getElementById('blastListSelect');
-          var opt = sel.options[sel.selectedIndex];
-          var step2 = document.getElementById('step2Card');
-          var step3 = document.getElementById('step3Card');
-          var step4 = document.getElementById('step4Card');
-          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
-          var raw = opt.getAttribute('data-emails') || '';
-          currentEmails = raw ? raw.split('||') : [];
-          selectedEmails = new Set(currentEmails);
-          renderChips();
-          step2.style.display=''; step3.style.display=''; step4.style.display='';
+          try {
+            var sel = document.getElementById('blastListSelect');
+            var idx = sel.value;
+            var step2 = document.getElementById('step2Card');
+            var step3 = document.getElementById('step3Card');
+            var step4 = document.getElementById('step4Card');
+            if (!idx) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+            console.log('blastListChanged: index=' + idx);
+            currentEmails = (blastListData && blastListData[idx]) ? blastListData[idx] : [];
+            console.log('blastListChanged: loaded ' + currentEmails.length + ' emails');
+            selectedEmails = new Set(currentEmails);
+            renderChips();
+            step2.style.display=''; step3.style.display=''; step4.style.display='';
+          } catch(e) {
+            console.error('blastListChanged error:', e);
+            alert('Error loading email list: ' + e.message);
+          }
         }
 
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
-          c.innerHTML = '';
-          currentEmails.forEach(function(em) {
-            var chip = document.createElement('span');
-            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-            chip.textContent = em;
-            chip.onclick = function() {
-              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-              this.classList.toggle('selected');
-              updateCount();
-            };
-            c.appendChild(chip);
-          });
+          c.innerHTML = '<div class="text-muted">Loading ' + currentEmails.length + ' emails...</div>';
           updateCount();
+          var batchSize = 200;
+          var idx = 0;
+          function renderBatch() {
+            if (idx === 0) c.innerHTML = '';
+            var frag = document.createDocumentFragment();
+            var end = Math.min(idx + batchSize, currentEmails.length);
+            for (var i = idx; i < end; i++) {
+              (function(em) {
+                var chip = document.createElement('span');
+                chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+                chip.textContent = em;
+                chip.onclick = function() {
+                  if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+                  this.classList.toggle('selected');
+                  updateCount();
+                };
+                frag.appendChild(chip);
+              })(currentEmails[i]);
+            }
+            c.appendChild(frag);
+            idx = end;
+            if (idx < currentEmails.length) {
+              setTimeout(renderBatch, 0);
+            }
+          }
+          if (currentEmails.length > 0) setTimeout(renderBatch, 0);
+          else c.innerHTML = '<div class="text-muted">No emails in this list.</div>';
         }
 
         function toggleAllEmails(selectAll) {
