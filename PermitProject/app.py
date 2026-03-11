@@ -1455,13 +1455,14 @@ app.jinja_loader = DictLoader({
               <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
-                  <option value="{{ loop.index0 }}"
-                    data-emails="{{ lst.emails | join('||') }}"
-                    data-names="{{ lst.names | tojson | e }}">
+                  <option value="{{ loop.index0 }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
                   </option>
                 {% endfor %}
               </select>
+              <script>
+                var blastListData = {{ email_lists | tojson }};
+              </script>
             </div>
           </div>
 
@@ -1601,11 +1602,11 @@ app.jinja_loader = DictLoader({
           var step3 = document.getElementById('step3Card');
           var step4 = document.getElementById('step4Card');
           if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
-          var raw = opt.getAttribute('data-emails') || '';
-          currentEmails = raw ? raw.split('||') : [];
+          var listIdx = parseInt(opt.value);
+          var listData = blastListData[listIdx] || {};
+          currentEmails = listData.emails || [];
           selectedEmails = new Set(currentEmails);
-          // Parse names mapping
-          try { emailNames = JSON.parse(opt.getAttribute('data-names') || '{}'); } catch(e) { emailNames = {}; }
+          emailNames = listData.names || {};
           // Show steps immediately, then render chips asynchronously
           step2.style.display=''; step3.style.display=''; step4.style.display='';
           updateCount();
