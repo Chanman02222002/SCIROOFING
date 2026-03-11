@@ -1461,7 +1461,13 @@ app.jinja_loader = DictLoader({
                 {% endfor %}
               </select>
               <script>
-                var blastListData = {{ email_lists | tojson }};
+                try {
+                  var blastListData = {{ email_lists | tojson | safe }};
+                  console.log('blastListData loaded:', blastListData.length, 'lists');
+                } catch(e) {
+                  console.error('Failed to parse blastListData:', e);
+                  var blastListData = [];
+                }
               </script>
             </div>
           </div>
@@ -1596,21 +1602,33 @@ app.jinja_loader = DictLoader({
         var emailNames = {};  // email -> name mapping
 
         function blastListChanged() {
-          var sel = document.getElementById('blastListSelect');
-          var opt = sel.options[sel.selectedIndex];
-          var step2 = document.getElementById('step2Card');
-          var step3 = document.getElementById('step3Card');
-          var step4 = document.getElementById('step4Card');
-          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
-          var listIdx = parseInt(opt.value);
-          var listData = blastListData[listIdx] || {};
-          currentEmails = listData.emails || [];
-          selectedEmails = new Set(currentEmails);
-          emailNames = listData.names || {};
-          // Show steps immediately, then render chips asynchronously
-          step2.style.display=''; step3.style.display=''; step4.style.display='';
-          updateCount();
-          renderChips();
+          try {
+            console.log('blastListChanged called');
+            var sel = document.getElementById('blastListSelect');
+            var opt = sel.options[sel.selectedIndex];
+            var step2 = document.getElementById('step2Card');
+            var step3 = document.getElementById('step3Card');
+            var step4 = document.getElementById('step4Card');
+            if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+            var listIdx = parseInt(opt.value);
+            console.log('Selected list index:', listIdx, 'blastListData length:', (typeof blastListData !== 'undefined' ? blastListData.length : 'UNDEFINED'));
+            if (typeof blastListData === 'undefined' || !blastListData || !blastListData.length) {
+              alert('Email list data not loaded. Please refresh the page.');
+              return;
+            }
+            var listData = blastListData[listIdx] || {};
+            currentEmails = listData.emails || [];
+            selectedEmails = new Set(currentEmails);
+            emailNames = listData.names || {};
+            console.log('Loaded', currentEmails.length, 'emails');
+            // Show steps immediately, then render chips asynchronously
+            step2.style.display=''; step3.style.display=''; step4.style.display='';
+            updateCount();
+            renderChips();
+          } catch(err) {
+            console.error('blastListChanged error:', err);
+            alert('Error loading email list: ' + err.message);
+          }
         }
 
         var chipPageSize = 200;
