@@ -1637,7 +1637,7 @@ app.jinja_loader = DictLoader({
           var prev = document.getElementById('emailPreview');
           prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</h4>'
             + '<hr style="border:none;border-top:2px solid #e2e8f0;margin:8px 0 16px;">'
-            + '<div>' + body + '</div>'
+            + '<div>' + body.replace(/\n/g, '<br>') + '</div>'
             + '<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0 8px;">'
             + '<p style="font-size:12px;color:#94a3b8;">Email Blast Preview</p>';
           wrap.style.display = '';
@@ -5064,7 +5064,7 @@ def _send_blast_email(to_email, subject, body_html, from_name=None):
   <div style="max-width:600px;margin:0 auto;">
     <h2 style="color:#2563eb;margin-bottom:4px;">{subject}</h2>
     <hr style="border:none;border-top:2px solid #e2e8f0;margin:12px 0 20px;">
-    <div>{body_html}</div>
+    <div>{body_html.replace(chr(10), '<br>')}</div>
     <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px;">
     <p style="font-size:12px;color:#94a3b8;">Sent via Email Blast Scheduler</p>
   </div>
