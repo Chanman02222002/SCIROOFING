@@ -598,7 +598,6 @@ def _get_all_email_lists():
                 "client": uname,
                 "name": lst["name"],
                 "emails": lst["emails"],
-                "names": lst.get("names", {}),
                 "uploaded_at": lst.get("uploaded_at", ""),
             })
     return all_lists
@@ -1452,23 +1451,15 @@ app.jinja_loader = DictLoader({
           <div class="blast-card">
             <div class="blast-card-header">Step 1 &mdash; Select an Email List</div>
             <div class="blast-card-body">
-              <select id="blastListSelect" class="form-select" onchange="blastListChanged()" oninput="blastListChanged()">
+              <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
-                  <option value="{{ loop.index0 }}">
+                  <option value="{{ loop.index0 }}"
+                    data-emails="{{ lst.emails | join('||') }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
                   </option>
                 {% endfor %}
               </select>
-              <script>
-                try {
-                  var blastListData = {{ email_lists | tojson | safe }};
-                  console.log('blastListData loaded:', blastListData.length, 'lists');
-                } catch(e) {
-                  console.error('Failed to parse blastListData:', e);
-                  var blastListData = [];
-                }
-              </script>
             </div>
           </div>
 
@@ -1505,8 +1496,7 @@ app.jinja_loader = DictLoader({
                 <div class="col-12">
                   <label class="form-label fw-bold">Email Body (HTML supported)</label>
                   <textarea id="blastBody" class="form-control" rows="10"
-                    placeholder="Write your email content here. Use [Name] to personalise with the recipient's name."></textarea>
-                  <small class="text-muted">Tip: Use <code>[Name]</code> anywhere in the body or subject to insert each recipient's name (e.g. "Hi [Name],"). Names are pulled from the uploaded list.</small>
+                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
                 </div>
                 <div class="col-12">
                   <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
@@ -1529,7 +1519,6 @@ app.jinja_loader = DictLoader({
                 <input type="hidden" name="subject" id="hSubject">
                 <input type="hidden" name="from_name" id="hFromName">
                 <input type="hidden" name="body" id="hBody">
-                <input type="hidden" name="names_json" id="hNamesJson">
 
                 <div class="row g-3 align-items-end">
                   <div class="col-md-5">
@@ -1599,83 +1588,35 @@ app.jinja_loader = DictLoader({
         // --- Email Blast Scheduler JS ---
         var currentEmails = [];
         var selectedEmails = new Set();
-        var emailNames = {};  // email -> name mapping
 
         function blastListChanged() {
-          try {
-            console.log('blastListChanged called');
-            var sel = document.getElementById('blastListSelect');
-            var opt = sel.options[sel.selectedIndex];
-            var step2 = document.getElementById('step2Card');
-            var step3 = document.getElementById('step3Card');
-            var step4 = document.getElementById('step4Card');
-            if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
-            var listIdx = parseInt(opt.value);
-            console.log('Selected list index:', listIdx, 'blastListData length:', (typeof blastListData !== 'undefined' ? blastListData.length : 'UNDEFINED'));
-            if (typeof blastListData === 'undefined' || !blastListData || !blastListData.length) {
-              alert('Email list data not loaded. Please refresh the page.');
-              return;
-            }
-            var listData = blastListData[listIdx] || {};
-            currentEmails = listData.emails || [];
-            selectedEmails = new Set(currentEmails);
-            emailNames = listData.names || {};
-            console.log('Loaded', currentEmails.length, 'emails');
-            // Show steps immediately, then render chips asynchronously
-            step2.style.display=''; step3.style.display=''; step4.style.display='';
-            updateCount();
-            renderChips();
-          } catch(err) {
-            console.error('blastListChanged error:', err);
-            alert('Error loading email list: ' + err.message);
-          }
+          var sel = document.getElementById('blastListSelect');
+          var opt = sel.options[sel.selectedIndex];
+          var step2 = document.getElementById('step2Card');
+          var step3 = document.getElementById('step3Card');
+          var step4 = document.getElementById('step4Card');
+          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+          var raw = opt.getAttribute('data-emails') || '';
+          currentEmails = raw ? raw.split('||') : [];
+          selectedEmails = new Set(currentEmails);
+          renderChips();
+          step2.style.display=''; step3.style.display=''; step4.style.display='';
         }
-
-        var chipPageSize = 200;
-        var chipPage = 0;
 
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
-          chipPage = 0;
-          renderChipPage(c);
-        }
-
-        function renderChipPage(container) {
-          var start = chipPage * chipPageSize;
-          var end = Math.min(start + chipPageSize, currentEmails.length);
-          var frag = document.createDocumentFragment();
-          for (var i = start; i < end; i++) {
-            (function(em) {
-              var chip = document.createElement('span');
-              chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-              chip.textContent = em;
-              chip.onclick = function() {
-                if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-                this.classList.toggle('selected');
-                updateCount();
-              };
-              frag.appendChild(chip);
-            })(currentEmails[i]);
-          }
-          container.appendChild(frag);
-          chipPage++;
-          // If more emails remain, render next batch asynchronously
-          if (end < currentEmails.length) {
-            // Show a loading indicator
-            var loader = document.getElementById('chipLoader');
-            if (!loader) {
-              loader = document.createElement('div');
-              loader.id = 'chipLoader';
-              loader.style.cssText = 'text-align:center;padding:8px;color:#64748b;font-size:.82rem;';
-              loader.textContent = 'Loading ' + currentEmails.length + ' recipients...';
-              container.parentNode.insertBefore(loader, container.nextSibling);
-            }
-            setTimeout(function() { renderChipPage(container); }, 0);
-          } else {
-            var loader = document.getElementById('chipLoader');
-            if (loader) loader.remove();
-          }
+          currentEmails.forEach(function(em) {
+            var chip = document.createElement('span');
+            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+            chip.textContent = em;
+            chip.onclick = function() {
+              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+              this.classList.toggle('selected');
+              updateCount();
+            };
+            c.appendChild(chip);
+          });
           updateCount();
         }
 
@@ -1694,18 +1635,9 @@ app.jinja_loader = DictLoader({
           var body = document.getElementById('blastBody').value || '';
           var wrap = document.getElementById('previewWrap');
           var prev = document.getElementById('emailPreview');
-          // Find the first available name for preview sample
-          var sampleName = 'Dr. Smith';
-          var names = Object.values(emailNames);
-          if (names.length > 0) sampleName = names[0];
-          // Replace [Name] placeholder with sample name for preview
-          var previewSubj = subj.replace(/\[Name\]/gi, sampleName);
-          var previewBody = body.replace(/\[Name\]/gi, sampleName);
-          // Convert plain-text newlines to <br> so preview matches what gets sent
-          previewBody = previewBody.replace(/\n/g, '<br>');
-          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + previewSubj.replace(/</g,'&lt;') + '</h4>'
+          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</h4>'
             + '<hr style="border:none;border-top:2px solid #e2e8f0;margin:8px 0 16px;">'
-            + '<div>' + previewBody + '</div>'
+            + '<div>' + body + '</div>'
             + '<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0 8px;">'
             + '<p style="font-size:12px;color:#94a3b8;">Email Blast Preview</p>';
           wrap.style.display = '';
@@ -1722,19 +1654,8 @@ app.jinja_loader = DictLoader({
           document.getElementById('hSubject').value = subj;
           document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
           document.getElementById('hBody').value = body;
-          document.getElementById('hNamesJson').value = JSON.stringify(emailNames);
           return true;
         }
-
-        document.addEventListener('DOMContentLoaded', function() {
-          var sel = document.getElementById('blastListSelect');
-          if (!sel) return;
-          // If the browser restores a previous selection (or only one list exists),
-          // initialize the downstream steps immediately.
-          if (sel.value) {
-            blastListChanged();
-          }
-        });
       </script>
     {% endblock %}
     """,
@@ -5043,30 +4964,9 @@ def adminchan_upload_list(client_username):
                 email_col = col
                 break
 
-        # Try to find a name column (for personalised greetings)
-        name_col = None
-        for col in df.columns:
-            cl = col.lower().strip()
-            if cl in ("name", "full name", "fullname", "doctor", "dr", "physician",
-                       "first name", "firstname", "last name", "lastname",
-                       "doctor name", "physician name", "contact name", "contact"):
-                name_col = col
-                break
-        if not name_col:
-            for col in df.columns:
-                if "name" in col.lower():
-                    name_col = col
-                    break
-
         emails = []
-        names = {}  # email -> name mapping for [Name] placeholder
         if email_col:
-            for _, row in df.iterrows():
-                em = str(row[email_col]).strip() if pd.notna(row[email_col]) else ""
-                if em:
-                    emails.append(em)
-                    if name_col and pd.notna(row.get(name_col)):
-                        names[em] = str(row[name_col]).strip()
+            emails = [str(v).strip() for v in df[email_col].dropna().tolist() if str(v).strip()]
         else:
             # Fallback: take first column as emails
             emails = [str(v).strip() for v in df.iloc[:, 0].dropna().tolist() if str(v).strip()]
@@ -5075,7 +4975,6 @@ def adminchan_upload_list(client_username):
         data["lists"].append({
             "name": f.filename,
             "emails": emails,
-            "names": names,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
@@ -5149,21 +5048,8 @@ def admin_delete():
 
 
 # -------- Email Blast Scheduler routes --------
-def _send_blast_email(to_email, subject, body_html, from_name=None, recipient_name=None):
-    """Send a single blast email. Returns (success: bool, error: str|None).
-    If recipient_name is provided, [Name] placeholders in subject and body are replaced."""
-    # Replace [Name] placeholder with the recipient's actual name
-    if recipient_name:
-        subject = re.sub(r'\[Name\]', recipient_name, subject, flags=re.IGNORECASE)
-        body_html = re.sub(r'\[Name\]', recipient_name, body_html, flags=re.IGNORECASE)
-    else:
-        # Remove placeholder if no name available
-        subject = re.sub(r'\[Name\]', '', subject, flags=re.IGNORECASE)
-        body_html = re.sub(r'\[Name\]', '', body_html, flags=re.IGNORECASE)
-
-    # Convert plain-text newlines to <br> for proper HTML formatting
-    body_html = body_html.replace('\n', '<br>')
-
+def _send_blast_email(to_email, subject, body_html, from_name=None):
+    """Send a single blast email. Returns (success: bool, error: str|None)."""
     from_addr = f"{from_name} <{SMTP_FROM_EMAIL}>" if from_name else SMTP_FROM_EMAIL
     try:
         msg = EmailMessage()
@@ -5210,13 +5096,6 @@ def admin_blast_schedule():
     from_name = request.form.get("from_name", "").strip()
     body = request.form.get("body", "").strip()
     scheduled_for = request.form.get("scheduled_for", "").strip()
-    names_json = request.form.get("names_json", "{}").strip()
-
-    # Parse email-to-name mapping for [Name] personalisation
-    try:
-        names_map = json.loads(names_json) if names_json else {}
-    except (json.JSONDecodeError, ValueError):
-        names_map = {}
 
     if not selected_raw or not subject or not body:
         flash("Subject, body, and at least one recipient are required.")
@@ -5238,9 +5117,8 @@ def admin_blast_schedule():
         pass
 
     if action == "test":
-        # Send test email to the test address (use first available name for preview)
-        sample_name = next(iter(names_map.values()), "Dr. Smith") if names_map else None
-        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name, recipient_name=sample_name)
+        # Send test email to the test address
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
         if ok:
             flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
         else:
@@ -5251,7 +5129,7 @@ def admin_blast_schedule():
         # Send immediately to all selected recipients
         ok_count, fail_count = 0, 0
         for em in selected_emails:
-            ok, err = _send_blast_email(em, subject, body, from_name, recipient_name=names_map.get(em))
+            ok, err = _send_blast_email(em, subject, body, from_name)
             if ok:
                 ok_count += 1
             else:
@@ -5264,7 +5142,6 @@ def admin_blast_schedule():
             "from_name": from_name,
             "list_name": list_name,
             "recipients": selected_emails,
-            "names_map": names_map,
             "recipient_count": len(selected_emails),
             "scheduled_for": None,
             "status": "sent",
@@ -5286,7 +5163,6 @@ def admin_blast_schedule():
         "from_name": from_name,
         "list_name": list_name,
         "recipients": selected_emails,
-        "names_map": names_map,
         "recipient_count": len(selected_emails),
         "scheduled_for": scheduled_for,
         "status": "pending",
@@ -5316,9 +5192,8 @@ def admin_blast_action():
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
-        blast_names = blast.get("names_map", {})
         for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), recipient_name=blast_names.get(em))
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"))
             if ok:
                 ok_count += 1
             else:
@@ -5469,6 +5344,117 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
