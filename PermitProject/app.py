@@ -1606,24 +1606,57 @@ app.jinja_loader = DictLoader({
           selectedEmails = new Set(currentEmails);
           // Parse names mapping
           try { emailNames = JSON.parse(opt.getAttribute('data-names') || '{}'); } catch(e) { emailNames = {}; }
-          renderChips();
+          // Show steps immediately, then render chips asynchronously
           step2.style.display=''; step3.style.display=''; step4.style.display='';
+          updateCount();
+          renderChips();
         }
+
+        var chipPageSize = 200;
+        var chipPage = 0;
 
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
-          currentEmails.forEach(function(em) {
-            var chip = document.createElement('span');
-            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-            chip.textContent = em;
-            chip.onclick = function() {
-              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-              this.classList.toggle('selected');
-              updateCount();
-            };
-            c.appendChild(chip);
-          });
+          chipPage = 0;
+          renderChipPage(c);
+        }
+
+        function renderChipPage(container) {
+          var start = chipPage * chipPageSize;
+          var end = Math.min(start + chipPageSize, currentEmails.length);
+          var frag = document.createDocumentFragment();
+          for (var i = start; i < end; i++) {
+            (function(em) {
+              var chip = document.createElement('span');
+              chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+              chip.textContent = em;
+              chip.onclick = function() {
+                if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+                this.classList.toggle('selected');
+                updateCount();
+              };
+              frag.appendChild(chip);
+            })(currentEmails[i]);
+          }
+          container.appendChild(frag);
+          chipPage++;
+          // If more emails remain, render next batch asynchronously
+          if (end < currentEmails.length) {
+            // Show a loading indicator
+            var loader = document.getElementById('chipLoader');
+            if (!loader) {
+              loader = document.createElement('div');
+              loader.id = 'chipLoader';
+              loader.style.cssText = 'text-align:center;padding:8px;color:#64748b;font-size:.82rem;';
+              loader.textContent = 'Loading ' + currentEmails.length + ' recipients...';
+              container.parentNode.insertBefore(loader, container.nextSibling);
+            }
+            setTimeout(function() { renderChipPage(container); }, 0);
+          } else {
+            var loader = document.getElementById('chipLoader');
+            if (loader) loader.remove();
+          }
           updateCount();
         }
 
