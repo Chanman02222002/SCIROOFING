@@ -1452,7 +1452,7 @@ app.jinja_loader = DictLoader({
           <div class="blast-card">
             <div class="blast-card-header">Step 1 &mdash; Select an Email List</div>
             <div class="blast-card-body">
-              <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
+              <select id="blastListSelect" class="form-select" onchange="blastListChanged()" oninput="blastListChanged()">
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
                   <option value="{{ loop.index0 }}">
@@ -1707,6 +1707,16 @@ app.jinja_loader = DictLoader({
           document.getElementById('hNamesJson').value = JSON.stringify(emailNames);
           return true;
         }
+
+        document.addEventListener('DOMContentLoaded', function() {
+          var sel = document.getElementById('blastListSelect');
+          if (!sel) return;
+          // If the browser restores a previous selection (or only one list exists),
+          // initialize the downstream steps immediately.
+          if (sel.value) {
+            blastListChanged();
+          }
+        });
       </script>
     {% endblock %}
     """,
@@ -5441,6 +5451,7 @@ if __name__ == "__main__":
     # For Render: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
+
 
 
 
