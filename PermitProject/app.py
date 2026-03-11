@@ -1531,7 +1531,7 @@ app.jinja_loader = DictLoader({
                     <button type="submit" name="action" value="send_now" class="btn btn-success"
                       onclick="return prepareBlastSubmit()">Send Now</button>
                     <button type="submit" name="action" value="test" class="btn btn-outline-warning"
-                      onclick="return prepareBlastSubmit()">Send Test Email</button>
+                      onclick="return prepareTestSubmit()">Send Test Email</button>
                   </div>
                 </div>
                 <div class="mt-2">
@@ -1651,6 +1651,19 @@ app.jinja_loader = DictLoader({
           if (!body) { alert('Please enter an email body.'); return false; }
           document.getElementById('hListIndex').value = document.getElementById('blastListSelect').value;
           document.getElementById('hSelectedEmails').value = Array.from(selectedEmails).join('||');
+          document.getElementById('hSubject').value = subj;
+          document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
+          document.getElementById('hBody').value = body;
+          return true;
+        }
+
+        function prepareTestSubmit() {
+          var subj = document.getElementById('blastSubject').value.trim();
+          var body = document.getElementById('blastBody').value.trim();
+          if (!subj) { alert('Please enter a subject line.'); return false; }
+          if (!body) { alert('Please enter an email body.'); return false; }
+          document.getElementById('hListIndex').value = document.getElementById('blastListSelect').value;
+          document.getElementById('hSelectedEmails').value = '';
           document.getElementById('hSubject').value = subj;
           document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
           document.getElementById('hBody').value = body;
@@ -5097,6 +5110,18 @@ def admin_blast_schedule():
     body = request.form.get("body", "").strip()
     scheduled_for = request.form.get("scheduled_for", "").strip()
 
+    # Test emails only need subject and body - no recipients required
+    if action == "test":
+        if not subject or not body:
+            flash("Subject and body are required to send a test email.")
+            return redirect(url_for("admin_page"))
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
+        if ok:
+            flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
+        else:
+            flash(f"Test email failed: {err}")
+        return redirect(url_for("admin_page"))
+
     if not selected_raw or not subject or not body:
         flash("Subject, body, and at least one recipient are required.")
         return redirect(url_for("admin_page"))
@@ -5115,15 +5140,6 @@ def admin_blast_schedule():
             list_name = f"{all_lists[idx]['name']} ({all_lists[idx]['client']})"
     except (ValueError, IndexError):
         pass
-
-    if action == "test":
-        # Send test email to the test address
-        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
-        if ok:
-            flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
-        else:
-            flash(f"Test email failed: {err}")
-        return redirect(url_for("admin_page"))
 
     if action == "send_now":
         # Send immediately to all selected recipients
