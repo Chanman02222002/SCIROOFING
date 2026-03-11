@@ -598,6 +598,7 @@ def _get_all_email_lists():
                 "client": uname,
                 "name": lst["name"],
                 "emails": lst["emails"],
+                "names": lst.get("names", {}),
                 "uploaded_at": lst.get("uploaded_at", ""),
             })
     return all_lists
@@ -1455,7 +1456,8 @@ app.jinja_loader = DictLoader({
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
                   <option value="{{ loop.index0 }}"
-                    data-emails="{{ lst.emails | join('||') }}">
+                    data-emails="{{ lst.emails | join('||') }}"
+                    data-names="{{ lst.names | tojson | e }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
                   </option>
                 {% endfor %}
@@ -1496,7 +1498,8 @@ app.jinja_loader = DictLoader({
                 <div class="col-12">
                   <label class="form-label fw-bold">Email Body (HTML supported)</label>
                   <textarea id="blastBody" class="form-control" rows="10"
-                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
+                    placeholder="Write your email content here. Use [Name] to personalise with the recipient's name."></textarea>
+                  <small class="text-muted">Tip: Use <code>[Name]</code> anywhere in the body or subject to insert each recipient's name (e.g. "Hi [Name],"). Names are pulled from the uploaded list.</small>
                 </div>
                 <div class="col-12">
                   <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
@@ -1519,6 +1522,7 @@ app.jinja_loader = DictLoader({
                 <input type="hidden" name="subject" id="hSubject">
                 <input type="hidden" name="from_name" id="hFromName">
                 <input type="hidden" name="body" id="hBody">
+                <input type="hidden" name="names_json" id="hNamesJson">
 
                 <div class="row g-3 align-items-end">
                   <div class="col-md-5">
@@ -1588,6 +1592,7 @@ app.jinja_loader = DictLoader({
         // --- Email Blast Scheduler JS ---
         var currentEmails = [];
         var selectedEmails = new Set();
+        var emailNames = {};  // email -> name mapping
 
         function blastListChanged() {
           var sel = document.getElementById('blastListSelect');
@@ -1599,6 +1604,8 @@ app.jinja_loader = DictLoader({
           var raw = opt.getAttribute('data-emails') || '';
           currentEmails = raw ? raw.split('||') : [];
           selectedEmails = new Set(currentEmails);
+          // Parse names mapping
+          try { emailNames = JSON.parse(opt.getAttribute('data-names') || '{}'); } catch(e) { emailNames = {}; }
           renderChips();
           step2.style.display=''; step3.style.display=''; step4.style.display='';
         }
@@ -1635,9 +1642,18 @@ app.jinja_loader = DictLoader({
           var body = document.getElementById('blastBody').value || '';
           var wrap = document.getElementById('previewWrap');
           var prev = document.getElementById('emailPreview');
-          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</h4>'
+          // Find the first available name for preview sample
+          var sampleName = 'Dr. Smith';
+          var names = Object.values(emailNames);
+          if (names.length > 0) sampleName = names[0];
+          // Replace [Name] placeholder with sample name for preview
+          var previewSubj = subj.replace(/\[Name\]/gi, sampleName);
+          var previewBody = body.replace(/\[Name\]/gi, sampleName);
+          // Convert plain-text newlines to <br> so preview matches what gets sent
+          previewBody = previewBody.replace(/\n/g, '<br>');
+          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + previewSubj.replace(/</g,'&lt;') + '</h4>'
             + '<hr style="border:none;border-top:2px solid #e2e8f0;margin:8px 0 16px;">'
-            + '<div>' + body + '</div>'
+            + '<div>' + previewBody + '</div>'
             + '<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0 8px;">'
             + '<p style="font-size:12px;color:#94a3b8;">Email Blast Preview</p>';
           wrap.style.display = '';
@@ -1654,6 +1670,7 @@ app.jinja_loader = DictLoader({
           document.getElementById('hSubject').value = subj;
           document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
           document.getElementById('hBody').value = body;
+          document.getElementById('hNamesJson').value = JSON.stringify(emailNames);
           return true;
         }
       </script>
@@ -4964,9 +4981,30 @@ def adminchan_upload_list(client_username):
                 email_col = col
                 break
 
+        # Try to find a name column (for personalised greetings)
+        name_col = None
+        for col in df.columns:
+            cl = col.lower().strip()
+            if cl in ("name", "full name", "fullname", "doctor", "dr", "physician",
+                       "first name", "firstname", "last name", "lastname",
+                       "doctor name", "physician name", "contact name", "contact"):
+                name_col = col
+                break
+        if not name_col:
+            for col in df.columns:
+                if "name" in col.lower():
+                    name_col = col
+                    break
+
         emails = []
+        names = {}  # email -> name mapping for [Name] placeholder
         if email_col:
-            emails = [str(v).strip() for v in df[email_col].dropna().tolist() if str(v).strip()]
+            for _, row in df.iterrows():
+                em = str(row[email_col]).strip() if pd.notna(row[email_col]) else ""
+                if em:
+                    emails.append(em)
+                    if name_col and pd.notna(row.get(name_col)):
+                        names[em] = str(row[name_col]).strip()
         else:
             # Fallback: take first column as emails
             emails = [str(v).strip() for v in df.iloc[:, 0].dropna().tolist() if str(v).strip()]
@@ -4975,6 +5013,7 @@ def adminchan_upload_list(client_username):
         data["lists"].append({
             "name": f.filename,
             "emails": emails,
+            "names": names,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
@@ -5048,8 +5087,21 @@ def admin_delete():
 
 
 # -------- Email Blast Scheduler routes --------
-def _send_blast_email(to_email, subject, body_html, from_name=None):
-    """Send a single blast email. Returns (success: bool, error: str|None)."""
+def _send_blast_email(to_email, subject, body_html, from_name=None, recipient_name=None):
+    """Send a single blast email. Returns (success: bool, error: str|None).
+    If recipient_name is provided, [Name] placeholders in subject and body are replaced."""
+    # Replace [Name] placeholder with the recipient's actual name
+    if recipient_name:
+        subject = re.sub(r'\[Name\]', recipient_name, subject, flags=re.IGNORECASE)
+        body_html = re.sub(r'\[Name\]', recipient_name, body_html, flags=re.IGNORECASE)
+    else:
+        # Remove placeholder if no name available
+        subject = re.sub(r'\[Name\]', '', subject, flags=re.IGNORECASE)
+        body_html = re.sub(r'\[Name\]', '', body_html, flags=re.IGNORECASE)
+
+    # Convert plain-text newlines to <br> for proper HTML formatting
+    body_html = body_html.replace('\n', '<br>')
+
     from_addr = f"{from_name} <{SMTP_FROM_EMAIL}>" if from_name else SMTP_FROM_EMAIL
     try:
         msg = EmailMessage()
@@ -5096,6 +5148,13 @@ def admin_blast_schedule():
     from_name = request.form.get("from_name", "").strip()
     body = request.form.get("body", "").strip()
     scheduled_for = request.form.get("scheduled_for", "").strip()
+    names_json = request.form.get("names_json", "{}").strip()
+
+    # Parse email-to-name mapping for [Name] personalisation
+    try:
+        names_map = json.loads(names_json) if names_json else {}
+    except (json.JSONDecodeError, ValueError):
+        names_map = {}
 
     if not selected_raw or not subject or not body:
         flash("Subject, body, and at least one recipient are required.")
@@ -5117,8 +5176,9 @@ def admin_blast_schedule():
         pass
 
     if action == "test":
-        # Send test email to the test address
-        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
+        # Send test email to the test address (use first available name for preview)
+        sample_name = next(iter(names_map.values()), "Dr. Smith") if names_map else None
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name, recipient_name=sample_name)
         if ok:
             flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
         else:
@@ -5129,7 +5189,7 @@ def admin_blast_schedule():
         # Send immediately to all selected recipients
         ok_count, fail_count = 0, 0
         for em in selected_emails:
-            ok, err = _send_blast_email(em, subject, body, from_name)
+            ok, err = _send_blast_email(em, subject, body, from_name, recipient_name=names_map.get(em))
             if ok:
                 ok_count += 1
             else:
@@ -5142,6 +5202,7 @@ def admin_blast_schedule():
             "from_name": from_name,
             "list_name": list_name,
             "recipients": selected_emails,
+            "names_map": names_map,
             "recipient_count": len(selected_emails),
             "scheduled_for": None,
             "status": "sent",
@@ -5163,6 +5224,7 @@ def admin_blast_schedule():
         "from_name": from_name,
         "list_name": list_name,
         "recipients": selected_emails,
+        "names_map": names_map,
         "recipient_count": len(selected_emails),
         "scheduled_for": scheduled_for,
         "status": "pending",
@@ -5192,8 +5254,9 @@ def admin_blast_action():
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
+        blast_names = blast.get("names_map", {})
         for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"))
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), recipient_name=blast_names.get(em))
             if ok:
                 ok_count += 1
             else:
