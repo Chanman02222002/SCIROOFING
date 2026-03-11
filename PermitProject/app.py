@@ -579,6 +579,32 @@ def _get_client_email_data(username):
     return EMAIL_MANAGER_DATA[username]
 
 # ==========================================================
+# EMAIL BLAST SCHEDULER (in-memory)
+# ==========================================================
+EMAIL_BLAST_SCHEDULES = []  # list of blast dicts
+_blast_id_counter = 0
+
+def _next_blast_id():
+    global _blast_id_counter
+    _blast_id_counter += 1
+    return _blast_id_counter
+
+def _get_all_email_lists():
+    """Collect every uploaded email list across all clients."""
+    all_lists = []
+    for uname, data in EMAIL_MANAGER_DATA.items():
+        for lst in data.get("lists", []):
+            all_lists.append({
+                "client": uname,
+                "name": lst["name"],
+                "emails": lst["emails"],
+                "uploaded_at": lst.get("uploaded_at", ""),
+            })
+    return all_lists
+
+TEST_EMAIL_ADDRESS = "Chandlerhoffman497@gmail.com"
+
+# ==========================================================
 # JINJA TEMPLATES (inline, full UI)
 # ==========================================================
 app.jinja_loader = DictLoader({
@@ -1313,78 +1339,324 @@ app.jinja_loader = DictLoader({
     "admin.html": """
     {% extends "base.html" %}
     {% block content %}
-      <h3 class="mb-3">Admin — Manage Logins</h3>
-      <div class="row">
-        <div class="col-lg-6">
-          <div class="card mb-4">
-            <div class="card-body">
-              <h5>Add New Credential</h5>
-              <form method="post" action="{{ url_for('admin_add') }}">
-                <div class="row g-2">
-                  <div class="col-md-6">
-                    <label class="form-label">Username</label>
-                    <input name="username" class="form-control" required>
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">Password</label>
-                    <input name="password" class="form-control" required>
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">Role</label>
-                    <select name="role" class="form-select">
-                      <option value="client">client</option>
-                      <option value="admin">admin</option>
-                    </select>
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">Brand</label>
-                    <select name="brand" class="form-select">
-                      <option value="sci">sci</option>
-                      <option value="generic">generic</option>
-                      <option value="munsie">munsie</option>
-                      <option value="adminchan">adminchan</option>
-                      <option value="jobsdirect">jobsdirect</option>
-                    </select>
-                  </div>
-                </div>
-                <button class="btn btn-success mt-3">Add</button>
-              </form>
-            </div>
-          </div>
-        </div>
+      <style>
+        .blast-header {
+          background: linear-gradient(135deg, #1e293b, #334155);
+          color: #fff; border-radius: 16px; padding: 1.5rem 2rem; margin-bottom: 1.5rem;
+          box-shadow: 0 12px 30px rgba(15,23,42,.15);
+        }
+        .blast-header h4 { font-weight: 700; margin: 0; }
+        .blast-header p { color: rgba(255,255,255,.65); margin: .25rem 0 0; font-size: .9rem; }
+        .blast-card { background: #fff; border-radius: 14px; border: 1px solid rgba(15,23,42,.08);
+          box-shadow: 0 8px 24px rgba(15,23,42,.06); margin-bottom: 1.25rem; overflow: hidden; }
+        .blast-card-header { background: linear-gradient(135deg, rgba(59,130,246,.08), rgba(14,165,233,.05));
+          padding: 1rem 1.25rem; border-bottom: 1px solid rgba(15,23,42,.06); font-weight: 700; color: #0f172a; }
+        .blast-card-body { padding: 1.25rem; }
+        .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
+          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s; }
+        .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
+        .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
+          font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+        .sched-pending { background: rgba(251,191,36,.15); color: #b45309; }
+        .sched-sent { background: rgba(34,197,94,.15); color: #15803d; }
+        .sched-cancelled { background: rgba(239,68,68,.15); color: #dc2626; }
+        .sched-test-sent { background: rgba(59,130,246,.15); color: #1d4ed8; }
+        #emailPreview { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
+          background: #fafbfc; min-height: 120px; }
+      </style>
 
-        <div class="col-lg-6">
-          <div class="card">
-            <div class="card-body">
-              <h5>Current Users</h5>
-              <table class="table table-sm">
-                <thead>
-                  <tr><th>User</th><th>Role</th><th>Brand</th><th class="text-end">Actions</th></tr>
-                </thead>
-                <tbody>
-                  {% for u, info in users.items() %}
+      <h3 class="mb-3">Admin Panel</h3>
+      <ul class="nav nav-tabs mb-4" id="adminTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="logins-tab" data-bs-toggle="tab" data-bs-target="#logins-pane"
+            type="button" role="tab" aria-selected="true">Manage Logins</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="blast-tab" data-bs-toggle="tab" data-bs-target="#blast-pane"
+            type="button" role="tab" aria-selected="false">Email Blast Scheduler</button>
+        </li>
+      </ul>
+
+      <div class="tab-content" id="adminTabContent">
+        <!-- ====== TAB 1: Manage Logins (existing) ====== -->
+        <div class="tab-pane fade show active" id="logins-pane" role="tabpanel">
+          <div class="row">
+            <div class="col-lg-6">
+              <div class="card mb-4"><div class="card-body">
+                <h5>Add New Credential</h5>
+                <form method="post" action="{{ url_for('admin_add') }}">
+                  <div class="row g-2">
+                    <div class="col-md-6"><label class="form-label">Username</label>
+                      <input name="username" class="form-control" required></div>
+                    <div class="col-md-6"><label class="form-label">Password</label>
+                      <input name="password" class="form-control" required></div>
+                    <div class="col-md-6"><label class="form-label">Role</label>
+                      <select name="role" class="form-select">
+                        <option value="client">client</option><option value="admin">admin</option>
+                      </select></div>
+                    <div class="col-md-6"><label class="form-label">Brand</label>
+                      <select name="brand" class="form-select">
+                        <option value="sci">sci</option><option value="generic">generic</option>
+                        <option value="munsie">munsie</option><option value="adminchan">adminchan</option>
+                        <option value="jobsdirect">jobsdirect</option>
+                      </select></div>
+                  </div>
+                  <button class="btn btn-success mt-3">Add</button>
+                </form>
+              </div></div>
+            </div>
+            <div class="col-lg-6">
+              <div class="card"><div class="card-body">
+                <h5>Current Users</h5>
+                <table class="table table-sm">
+                  <thead><tr><th>User</th><th>Role</th><th>Brand</th><th class="text-end">Actions</th></tr></thead>
+                  <tbody>
+                    {% for u, info in users.items() %}
                     <tr>
-                      <td>{{ u }}</td>
-                      <td>{{ info.role }}</td>
-                      <td>{{ info.brand }}</td>
+                      <td>{{ u }}</td><td>{{ info.role }}</td><td>{{ info.brand }}</td>
                       <td class="text-end">
                         {% if u != 'admin' %}
                         <form method="post" action="{{ url_for('admin_delete') }}" onsubmit="return confirm('Delete {{u}}?');" class="d-inline">
                           <input type="hidden" name="username" value="{{ u }}">
                           <button class="btn btn-sm btn-outline-danger">Delete</button>
                         </form>
-                        {% else %}
-                          <span class="text-muted">protected</span>
-                        {% endif %}
+                        {% else %}<span class="text-muted">protected</span>{% endif %}
                       </td>
                     </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div></div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- ====== TAB 2: Email Blast Scheduler ====== -->
+        <div class="tab-pane fade" id="blast-pane" role="tabpanel">
+          <div class="blast-header">
+            <h4>Email Blast Scheduler</h4>
+            <p>Select a list, pick recipients, compose your email, and schedule or send a test</p>
+          </div>
+
+          {% if not email_lists %}
+            <div style="background:rgba(241,245,249,.6); border:2px dashed #cbd5e1; border-radius:12px;
+              padding:2rem; text-align:center; color:#94a3b8;">
+              <h5 style="color:#64748b;">No email lists available</h5>
+              <p>Upload email lists via the Email Manager (adminchan) first.</p>
+            </div>
+          {% else %}
+
+          <!-- Step 1: Choose List -->
+          <div class="blast-card">
+            <div class="blast-card-header">Step 1 &mdash; Select an Email List</div>
+            <div class="blast-card-body">
+              <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
+                <option value="">-- choose a list --</option>
+                {% for lst in email_lists %}
+                  <option value="{{ loop.index0 }}"
+                    data-emails="{{ lst.emails | join('||') }}">
+                    {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <!-- Step 2: Pick Recipients -->
+          <div class="blast-card" id="step2Card" style="display:none;">
+            <div class="blast-card-header">
+              Step 2 &mdash; Select Recipients
+              <span class="float-end">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleAllEmails(true)">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="toggleAllEmails(false)">Deselect All</button>
+              </span>
+            </div>
+            <div class="blast-card-body">
+              <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
+              <div class="mt-2 text-muted" style="font-size:.82rem;">
+                <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Compose Email -->
+          <div class="blast-card" id="step3Card" style="display:none;">
+            <div class="blast-card-header">Step 3 &mdash; Compose Email</div>
+            <div class="blast-card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">Subject Line</label>
+                  <input type="text" id="blastSubject" class="form-control" placeholder="e.g. Spring Roofing Special!">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">From Name (optional)</label>
+                  <input type="text" id="blastFromName" class="form-control" placeholder="e.g. SCI Roofing">
+                </div>
+                <div class="col-12">
+                  <label class="form-label fw-bold">Email Body (HTML supported)</label>
+                  <textarea id="blastBody" class="form-control" rows="10"
+                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
+                </div>
+                <div class="col-12">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
+                </div>
+                <div class="col-12" id="previewWrap" style="display:none;">
+                  <label class="form-label fw-bold">Email Preview</label>
+                  <div id="emailPreview"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4: Schedule / Send Test -->
+          <div class="blast-card" id="step4Card" style="display:none;">
+            <div class="blast-card-header">Step 4 &mdash; Schedule or Send Test</div>
+            <div class="blast-card-body">
+              <form method="post" action="{{ url_for('admin_blast_schedule') }}" id="blastForm">
+                <input type="hidden" name="list_index" id="hListIndex">
+                <input type="hidden" name="selected_emails" id="hSelectedEmails">
+                <input type="hidden" name="subject" id="hSubject">
+                <input type="hidden" name="from_name" id="hFromName">
+                <input type="hidden" name="body" id="hBody">
+
+                <div class="row g-3 align-items-end">
+                  <div class="col-md-5">
+                    <label class="form-label fw-bold">Schedule Date &amp; Time</label>
+                    <input type="datetime-local" name="scheduled_for" id="blastScheduleTime" class="form-control">
+                  </div>
+                  <div class="col-md-7 d-flex gap-2 flex-wrap">
+                    <button type="submit" name="action" value="schedule" class="btn btn-primary"
+                      onclick="return prepareBlastSubmit()">Schedule Blast</button>
+                    <button type="submit" name="action" value="send_now" class="btn btn-success"
+                      onclick="return prepareBlastSubmit()">Send Now</button>
+                    <button type="submit" name="action" value="test" class="btn btn-outline-warning"
+                      onclick="return prepareBlastSubmit()">Send Test Email</button>
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <small class="text-muted">Test emails are sent to <strong>{{ test_email }}</strong></small>
+                </div>
+              </form>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- Scheduled Blasts -->
+          {% if blast_schedules %}
+          <div class="blast-card mt-4">
+            <div class="blast-card-header">Scheduled &amp; Sent Blasts</div>
+            <div class="blast-card-body">
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead><tr>
+                    <th>ID</th><th>Subject</th><th>List</th><th>Recipients</th>
+                    <th>Scheduled For</th><th>Status</th><th class="text-end">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {% for b in blast_schedules %}
+                    <tr>
+                      <td>#{{ b.id }}</td>
+                      <td>{{ b.subject or 'No subject' }}</td>
+                      <td>{{ b.list_name }}</td>
+                      <td>{{ b.recipient_count }}</td>
+                      <td>{{ b.scheduled_for or 'Immediate' }}</td>
+                      <td><span class="sched-badge sched-{{ b.status|lower|replace(' ','-') }}">{{ b.status }}</span></td>
+                      <td class="text-end">
+                        {% if b.status == 'pending' %}
+                        <form method="post" action="{{ url_for('admin_blast_action') }}" class="d-inline">
+                          <input type="hidden" name="blast_id" value="{{ b.id }}">
+                          <button name="action" value="send" class="btn btn-sm btn-outline-success"
+                            onclick="return confirm('Send this blast to {{ b.recipient_count }} recipients now?')">Send Now</button>
+                          <button name="action" value="cancel" class="btn btn-sm btn-outline-danger ms-1">Cancel</button>
+                        </form>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+        </div><!-- /blast-pane -->
+      </div><!-- /tab-content -->
+
+      <script>
+        // --- Email Blast Scheduler JS ---
+        var currentEmails = [];
+        var selectedEmails = new Set();
+
+        function blastListChanged() {
+          var sel = document.getElementById('blastListSelect');
+          var opt = sel.options[sel.selectedIndex];
+          var step2 = document.getElementById('step2Card');
+          var step3 = document.getElementById('step3Card');
+          var step4 = document.getElementById('step4Card');
+          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+          var raw = opt.getAttribute('data-emails') || '';
+          currentEmails = raw ? raw.split('||') : [];
+          selectedEmails = new Set(currentEmails);
+          renderChips();
+          step2.style.display=''; step3.style.display=''; step4.style.display='';
+        }
+
+        function renderChips() {
+          var c = document.getElementById('emailChipsContainer');
+          c.innerHTML = '';
+          currentEmails.forEach(function(em) {
+            var chip = document.createElement('span');
+            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+            chip.textContent = em;
+            chip.onclick = function() {
+              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+              this.classList.toggle('selected');
+              updateCount();
+            };
+            c.appendChild(chip);
+          });
+          updateCount();
+        }
+
+        function toggleAllEmails(selectAll) {
+          if (selectAll) selectedEmails = new Set(currentEmails); else selectedEmails.clear();
+          renderChips();
+        }
+
+        function updateCount() {
+          document.getElementById('selectedCount').textContent = selectedEmails.size;
+          document.getElementById('totalCount').textContent = currentEmails.length;
+        }
+
+        function previewEmail() {
+          var subj = document.getElementById('blastSubject').value || 'No Subject';
+          var body = document.getElementById('blastBody').value || '';
+          var wrap = document.getElementById('previewWrap');
+          var prev = document.getElementById('emailPreview');
+          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</h4>'
+            + '<hr style="border:none;border-top:2px solid #e2e8f0;margin:8px 0 16px;">'
+            + '<div>' + body + '</div>'
+            + '<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0 8px;">'
+            + '<p style="font-size:12px;color:#94a3b8;">Email Blast Preview</p>';
+          wrap.style.display = '';
+        }
+
+        function prepareBlastSubmit() {
+          if (selectedEmails.size === 0) { alert('Please select at least one recipient.'); return false; }
+          var subj = document.getElementById('blastSubject').value.trim();
+          var body = document.getElementById('blastBody').value.trim();
+          if (!subj) { alert('Please enter a subject line.'); return false; }
+          if (!body) { alert('Please enter an email body.'); return false; }
+          document.getElementById('hListIndex').value = document.getElementById('blastListSelect').value;
+          document.getElementById('hSelectedEmails').value = Array.from(selectedEmails).join('||');
+          document.getElementById('hSubject').value = subj;
+          document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
+          document.getElementById('hBody').value = body;
+          return true;
+        }
+      </script>
     {% endblock %}
     """,
 
@@ -4722,7 +4994,12 @@ def admin_page():
 
     # For display convenience in template
     users_view = {u: type("obj", (), info) for u, info in USERS.items()}
-    return render_template("admin.html", users=users_view, title="Admin")
+    return render_template("admin.html",
+                           users=users_view,
+                           title="Admin",
+                           email_lists=_get_all_email_lists(),
+                           blast_schedules=EMAIL_BLAST_SCHEDULES,
+                           test_email=TEST_EMAIL_ADDRESS)
 
 @app.route("/admin/add", methods=["POST"])
 def admin_add():
@@ -4768,6 +5045,165 @@ def admin_delete():
     else:
         flash("User not found.")
     return redirect(url_for("admin_page"))
+
+
+# -------- Email Blast Scheduler routes --------
+def _send_blast_email(to_email, subject, body_html, from_name=None):
+    """Send a single blast email. Returns (success: bool, error: str|None)."""
+    from_addr = f"{from_name} <{SMTP_FROM_EMAIL}>" if from_name else SMTP_FROM_EMAIL
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = to_email
+        msg.set_content(re.sub("<[^>]+>", "", body_html))  # plain-text fallback
+
+        html_body = f"""\
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;line-height:1.6;padding:20px;">
+  <div style="max-width:600px;margin:0 auto;">
+    <h2 style="color:#2563eb;margin-bottom:4px;">{subject}</h2>
+    <hr style="border:none;border-top:2px solid #e2e8f0;margin:12px 0 20px;">
+    <div>{body_html}</div>
+    <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px;">
+    <p style="font-size:12px;color:#94a3b8;">Sent via Email Blast Scheduler</p>
+  </div>
+</body>
+</html>"""
+        msg.add_alternative(html_body, subtype="html")
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            smtp.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True, None
+    except Exception as exc:
+        logger.exception("Blast email send failed to %s", to_email)
+        return False, str(exc)
+
+
+@app.route("/admin/blast/schedule", methods=["POST"])
+def admin_blast_schedule():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    action = request.form.get("action", "")
+    list_index = request.form.get("list_index", "")
+    selected_raw = request.form.get("selected_emails", "")
+    subject = request.form.get("subject", "").strip()
+    from_name = request.form.get("from_name", "").strip()
+    body = request.form.get("body", "").strip()
+    scheduled_for = request.form.get("scheduled_for", "").strip()
+
+    if not selected_raw or not subject or not body:
+        flash("Subject, body, and at least one recipient are required.")
+        return redirect(url_for("admin_page"))
+
+    selected_emails = [e.strip() for e in selected_raw.split("||") if e.strip()]
+    if not selected_emails:
+        flash("No recipients selected.")
+        return redirect(url_for("admin_page"))
+
+    # Determine list name
+    all_lists = _get_all_email_lists()
+    list_name = "Unknown"
+    try:
+        idx = int(list_index)
+        if 0 <= idx < len(all_lists):
+            list_name = f"{all_lists[idx]['name']} ({all_lists[idx]['client']})"
+    except (ValueError, IndexError):
+        pass
+
+    if action == "test":
+        # Send test email to the test address
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
+        if ok:
+            flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
+        else:
+            flash(f"Test email failed: {err}")
+        return redirect(url_for("admin_page"))
+
+    if action == "send_now":
+        # Send immediately to all selected recipients
+        ok_count, fail_count = 0, 0
+        for em in selected_emails:
+            ok, err = _send_blast_email(em, subject, body, from_name)
+            if ok:
+                ok_count += 1
+            else:
+                fail_count += 1
+
+        blast = {
+            "id": _next_blast_id(),
+            "subject": subject,
+            "body": body,
+            "from_name": from_name,
+            "list_name": list_name,
+            "recipients": selected_emails,
+            "recipient_count": len(selected_emails),
+            "scheduled_for": None,
+            "status": "sent",
+            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        flash(f"Blast sent! {ok_count} delivered, {fail_count} failed.")
+        return redirect(url_for("admin_page"))
+
+    # Default: schedule for later
+    if not scheduled_for:
+        flash("Please select a date and time for the scheduled blast.")
+        return redirect(url_for("admin_page"))
+
+    blast = {
+        "id": _next_blast_id(),
+        "subject": subject,
+        "body": body,
+        "from_name": from_name,
+        "list_name": list_name,
+        "recipients": selected_emails,
+        "recipient_count": len(selected_emails),
+        "scheduled_for": scheduled_for,
+        "status": "pending",
+        "sent_at": None,
+    }
+    EMAIL_BLAST_SCHEDULES.insert(0, blast)
+    flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/blast/action", methods=["POST"])
+def admin_blast_action():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    blast_id = request.form.get("blast_id", type=int)
+    action = request.form.get("action", "")
+
+    blast = next((b for b in EMAIL_BLAST_SCHEDULES if b["id"] == blast_id), None)
+    if not blast:
+        flash("Blast not found.")
+        return redirect(url_for("admin_page"))
+
+    if action == "cancel":
+        blast["status"] = "cancelled"
+        flash(f"Blast #{blast_id} cancelled.")
+    elif action == "send" and blast["status"] == "pending":
+        ok_count, fail_count = 0, 0
+        for em in blast["recipients"]:
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"))
+            if ok:
+                ok_count += 1
+            else:
+                fail_count += 1
+        blast["status"] = "sent"
+        blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
+
+    return redirect(url_for("admin_page"))
+
 
 # -------- (Optional) Download endpoint (stub demonstrating send_file) --------
 # You can adapt this route if you later want to export CSV/Excel snapshots.
