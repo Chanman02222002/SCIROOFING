@@ -552,18 +552,29 @@ fake_properties = [make_property(i) for i in range(1, 51)]
 # USERS / AUTH
 # ==========================================================
 USERS = {
-    "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic"},
-    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan"},
-    "sci":        {"password": "sci123",     "role": "client", "brand": "sci"},
-    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic"},
-    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie"},
-    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect"},
+    "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic",    "sender_email": ""},
+    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan",  "sender_email": ""},
+    "sci":        {"password": "sci123",     "role": "client", "brand": "sci",        "sender_email": "Shawn@sciroof.com"},
+    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
+    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
+    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
 }
 
-# Per-brand SMTP sender overrides (brand -> from email)
-BRAND_FROM_EMAIL = {
-    "jobsdirect": "choffman@becastaffing.com",
-}
+def _get_sender_email_for_brand(brand):
+    """Look up the sender email for a brand by finding the first user with that brand who has a sender_email set."""
+    for uname, info in USERS.items():
+        if info["brand"] == brand and info.get("sender_email"):
+            return info["sender_email"]
+    return SMTP_FROM_EMAIL
+
+def _get_sender_email_for_user(username):
+    """Get sender email for a specific user, falling back to their brand default, then global default."""
+    info = USERS.get(username, {})
+    if info.get("sender_email"):
+        return info["sender_email"]
+    if info.get("brand"):
+        return _get_sender_email_for_brand(info["brand"])
+    return SMTP_FROM_EMAIL
 
 # ==========================================================
 # EMAIL MANAGER DATA (in-memory, keyed by client username)
@@ -593,12 +604,14 @@ def _get_all_email_lists():
     """Collect every uploaded email list across all clients."""
     all_lists = []
     for uname, data in EMAIL_MANAGER_DATA.items():
+        sender = _get_sender_email_for_user(uname)
         for lst in data.get("lists", []):
             all_lists.append({
                 "client": uname,
                 "name": lst["name"],
                 "emails": lst["emails"],
                 "uploaded_at": lst.get("uploaded_at", ""),
+                "sender_email": sender,
             })
     return all_lists
 
@@ -1401,6 +1414,8 @@ app.jinja_loader = DictLoader({
                         <option value="munsie">munsie</option><option value="adminchan">adminchan</option>
                         <option value="jobsdirect">jobsdirect</option>
                       </select></div>
+                    <div class="col-12"><label class="form-label">Sender Email Address</label>
+                      <input name="sender_email" type="email" class="form-control" placeholder="e.g. user@company.com (emails will be sent from this address)"></div>
                   </div>
                   <button class="btn btn-success mt-3">Add</button>
                 </form>
@@ -1410,11 +1425,19 @@ app.jinja_loader = DictLoader({
               <div class="card"><div class="card-body">
                 <h5>Current Users</h5>
                 <table class="table table-sm">
-                  <thead><tr><th>User</th><th>Role</th><th>Brand</th><th class="text-end">Actions</th></tr></thead>
+                  <thead><tr><th>User</th><th>Role</th><th>Brand</th><th>Sender Email</th><th class="text-end">Actions</th></tr></thead>
                   <tbody>
                     {% for u, info in users.items() %}
                     <tr>
                       <td>{{ u }}</td><td>{{ info.role }}</td><td>{{ info.brand }}</td>
+                      <td>
+                        <form method="post" action="{{ url_for('admin_update_sender_email') }}" class="d-flex gap-1">
+                          <input type="hidden" name="username" value="{{ u }}">
+                          <input type="email" name="sender_email" class="form-control form-control-sm" style="min-width:180px;"
+                            value="{{ info.sender_email or '' }}" placeholder="not set">
+                          <button class="btn btn-sm btn-outline-primary" title="Save">Save</button>
+                        </form>
+                      </td>
                       <td class="text-end">
                         {% if u != 'admin' %}
                         <form method="post" action="{{ url_for('admin_delete') }}" onsubmit="return confirm('Delete {{u}}?');" class="d-inline">
@@ -1455,11 +1478,17 @@ app.jinja_loader = DictLoader({
                 <option value="">-- choose a list --</option>
                 {% for lst in email_lists %}
                   <option value="{{ loop.index0 }}"
-                    data-emails="{{ lst.emails | join('||') }}">
-                    {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails
+                    data-emails="{{ lst.emails | join('||') }}"
+                    data-sender="{{ lst.sender_email }}">
+                    {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails &mdash; sends from {{ lst.sender_email }}
                   </option>
                 {% endfor %}
               </select>
+              <div id="senderEmailInfo" class="mt-2" style="display:none;">
+                <span class="badge bg-info text-dark" style="font-size:.85rem;">
+                  Emails will be sent from: <strong id="senderEmailAddr"></strong>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1595,12 +1624,15 @@ app.jinja_loader = DictLoader({
           var step2 = document.getElementById('step2Card');
           var step3 = document.getElementById('step3Card');
           var step4 = document.getElementById('step4Card');
-          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; return; }
+          var senderInfo = document.getElementById('senderEmailInfo');
+          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; if(senderInfo) senderInfo.style.display='none'; return; }
           var raw = opt.getAttribute('data-emails') || '';
+          var senderAddr = opt.getAttribute('data-sender') || 'default';
           currentEmails = raw ? raw.split('||') : [];
           selectedEmails = new Set(currentEmails);
           renderChips();
           step2.style.display=''; step3.style.display=''; step4.style.display='';
+          if(senderInfo) { senderInfo.style.display=''; document.getElementById('senderEmailAddr').textContent = senderAddr; }
         }
 
         function renderChips() {
@@ -4458,10 +4490,11 @@ def send_estimate_email(recipient, subject, body, result=None, pricing_result=No
     if not (SMTP_HOST and SMTP_FROM_EMAIL):
         return False, "SMTP is not configured. Set SMTP_HOST and SMTP_FROM_EMAIL (or SENDGRID_FROM_EMAIL) to enable outbound emails."
 
+    from_email = _get_sender_email_for_user(session.get("username", "")) if session.get("username") else SMTP_FROM_EMAIL
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = SMTP_FROM_EMAIL
+        msg["From"] = from_email
         msg["To"] = recipient
         msg.set_content(body)
 
@@ -4857,7 +4890,7 @@ def jobsdirect_dashboard():
     if current_brand() != "jobsdirect":
         return redirect(url_for("dashboard"))
 
-    from_email = BRAND_FROM_EMAIL.get("jobsdirect", SMTP_FROM_EMAIL)
+    from_email = _get_sender_email_for_user(session.get("username", ""))
     return render_template("jobsdirect_dashboard.html",
                            title="JobsDirect Dashboard",
                            from_email=from_email,
@@ -4879,7 +4912,7 @@ def jobsdirect_send():
         flash("All fields (to, subject, body) are required.")
         return redirect(url_for("jobsdirect_dashboard"))
 
-    from_email = BRAND_FROM_EMAIL.get("jobsdirect", SMTP_FROM_EMAIL)
+    from_email = _get_sender_email_for_user(session.get("username", ""))
     sent_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
@@ -5038,8 +5071,26 @@ def admin_add():
         flash("Invalid brand.")
         return redirect(url_for("admin_page"))
 
-    USERS[username] = {"password": password, "role": role, "brand": brand}
+    sender_email = request.form.get("sender_email", "").strip()
+    USERS[username] = {"password": password, "role": role, "brand": brand, "sender_email": sender_email}
     flash(f"User '{username}' added.")
+    return redirect(url_for("admin_page"))
+
+@app.route("/admin/update_sender_email", methods=["POST"])
+def admin_update_sender_email():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    username = request.form.get("username", "").strip()
+    sender_email = request.form.get("sender_email", "").strip()
+
+    if username not in USERS:
+        flash("User not found.")
+        return redirect(url_for("admin_page"))
+
+    USERS[username]["sender_email"] = sender_email
+    flash(f"Sender email for '{username}' updated to '{sender_email or '(none)' }'.")
     return redirect(url_for("admin_page"))
 
 @app.route("/admin/delete", methods=["POST"])
@@ -5061,9 +5112,10 @@ def admin_delete():
 
 
 # -------- Email Blast Scheduler routes --------
-def _send_blast_email(to_email, subject, body_html, from_name=None):
+def _send_blast_email(to_email, subject, body_html, from_name=None, sender_email=None):
     """Send a single blast email. Returns (success: bool, error: str|None)."""
-    from_addr = f"{from_name} <{SMTP_FROM_EMAIL}>" if from_name else SMTP_FROM_EMAIL
+    effective_from = sender_email or SMTP_FROM_EMAIL
+    from_addr = f"{from_name} <{effective_from}>" if from_name else effective_from
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -5110,14 +5162,25 @@ def admin_blast_schedule():
     body = request.form.get("body", "").strip()
     scheduled_for = request.form.get("scheduled_for", "").strip()
 
+    # Resolve sender email from the selected list's owner
+    all_lists = _get_all_email_lists()
+    list_owner = None
+    try:
+        idx = int(list_index) if list_index else -1
+        if 0 <= idx < len(all_lists):
+            list_owner = all_lists[idx].get("client")
+    except (ValueError, IndexError):
+        pass
+    sender_email = _get_sender_email_for_user(list_owner) if list_owner else SMTP_FROM_EMAIL
+
     # Test emails only need subject and body - no recipients required
     if action == "test":
         if not subject or not body:
             flash("Subject and body are required to send a test email.")
             return redirect(url_for("admin_page"))
-        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name)
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name, sender_email=sender_email)
         if ok:
-            flash(f"Test email sent to {TEST_EMAIL_ADDRESS}.")
+            flash(f"Test email sent to {TEST_EMAIL_ADDRESS} (from {sender_email}).")
         else:
             flash(f"Test email failed: {err}")
         return redirect(url_for("admin_page"))
@@ -5131,8 +5194,7 @@ def admin_blast_schedule():
         flash("No recipients selected.")
         return redirect(url_for("admin_page"))
 
-    # Determine list name
-    all_lists = _get_all_email_lists()
+    # Determine list name (reuse all_lists from above)
     list_name = "Unknown"
     try:
         idx = int(list_index)
@@ -5145,7 +5207,7 @@ def admin_blast_schedule():
         # Send immediately to all selected recipients
         ok_count, fail_count = 0, 0
         for em in selected_emails:
-            ok, err = _send_blast_email(em, subject, body, from_name)
+            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email)
             if ok:
                 ok_count += 1
             else:
@@ -5156,6 +5218,7 @@ def admin_blast_schedule():
             "subject": subject,
             "body": body,
             "from_name": from_name,
+            "sender_email": sender_email,
             "list_name": list_name,
             "recipients": selected_emails,
             "recipient_count": len(selected_emails),
@@ -5164,7 +5227,7 @@ def admin_blast_schedule():
             "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         EMAIL_BLAST_SCHEDULES.insert(0, blast)
-        flash(f"Blast sent! {ok_count} delivered, {fail_count} failed.")
+        flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("admin_page"))
 
     # Default: schedule for later
@@ -5177,6 +5240,7 @@ def admin_blast_schedule():
         "subject": subject,
         "body": body,
         "from_name": from_name,
+        "sender_email": sender_email,
         "list_name": list_name,
         "recipients": selected_emails,
         "recipient_count": len(selected_emails),
@@ -5209,7 +5273,7 @@ def admin_blast_action():
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
         for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"))
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), sender_email=blast.get("sender_email"))
             if ok:
                 ok_count += 1
             else:
