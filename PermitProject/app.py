@@ -624,49 +624,54 @@ TEST_EMAIL_ADDRESS = "Chandlerhoffman497@gmail.com"
 _scheduler_lock = threading.Lock()
 
 def _check_and_send_scheduled_blasts():
-    """Run in a background thread. Every 30s, scan EMAIL_BLAST_SCHEDULES
+    """Run in a background thread. Every 10s, scan EMAIL_BLAST_SCHEDULES
     for pending blasts whose scheduled_for time has passed, then send them."""
     while True:
-        time.sleep(30)
-        now = datetime.now()
-        with _scheduler_lock:
-            for blast in EMAIL_BLAST_SCHEDULES:
-                if blast["status"] != "pending" or not blast.get("scheduled_for"):
-                    continue
-                try:
-                    sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%dT%H:%M")
-                except (ValueError, TypeError):
-                    try:
-                        sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%d %H:%M:%S")
-                    except (ValueError, TypeError):
+        time.sleep(10)
+        try:
+            now = datetime.now()
+            blasts_to_send = []
+            with _scheduler_lock:
+                for blast in EMAIL_BLAST_SCHEDULES:
+                    if blast["status"] != "pending" or not blast.get("scheduled_for"):
+                        continue
+                    sched_str = blast["scheduled_for"]
+                    sched_dt = None
+                    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
                         try:
-                            sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%d %H:%M")
+                            sched_dt = datetime.strptime(sched_str, fmt)
+                            break
                         except (ValueError, TypeError):
-                            logger.warning("Unparseable scheduled_for: %s", blast["scheduled_for"])
                             continue
-                if now >= sched_dt:
-                    logger.info("Scheduler: sending blast #%s (scheduled for %s)", blast["id"], blast["scheduled_for"])
-                    blast["status"] = "sending"
-        # Send outside the lock to avoid blocking
-        blasts_to_send = [b for b in EMAIL_BLAST_SCHEDULES if b["status"] == "sending"]
-        for blast in blasts_to_send:
-            ok_count, fail_count = 0, 0
-            for em in blast.get("recipients", []):
-                try:
-                    ok, err = _send_blast_email(em, blast["subject"], blast["body"],
-                                                blast.get("from_name"), sender_email=blast.get("sender_email"))
-                    if ok:
-                        ok_count += 1
-                    else:
+                    if sched_dt is None:
+                        logger.warning("Unparseable scheduled_for: %s", sched_str)
+                        continue
+                    if now >= sched_dt:
+                        logger.info("Scheduler: sending blast #%s (scheduled for %s, now=%s)",
+                                    blast["id"], sched_str, now.strftime("%Y-%m-%d %H:%M:%S"))
+                        blast["status"] = "sending"
+                        blasts_to_send.append(blast)
+            # Send outside the lock to avoid blocking
+            for blast in blasts_to_send:
+                ok_count, fail_count = 0, 0
+                for em in blast.get("recipients", []):
+                    try:
+                        ok, err = _send_blast_email(em, blast["subject"], blast["body"],
+                                                    blast.get("from_name"), sender_email=blast.get("sender_email"))
+                        if ok:
+                            ok_count += 1
+                        else:
+                            fail_count += 1
+                    except Exception:
+                        logger.exception("Scheduler: failed to send to %s", em)
                         fail_count += 1
-                except Exception:
-                    logger.exception("Scheduler: failed to send to %s", em)
-                    fail_count += 1
-            blast["status"] = "sent"
-            blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
-            logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
-                        blast["id"], ok_count, fail_count)
+                blast["status"] = "sent"
+                blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+                logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
+                            blast["id"], ok_count, fail_count)
+        except Exception:
+            logger.exception("Scheduler: unexpected error in scheduler loop, continuing...")
 
 _scheduler_thread = threading.Thread(target=_check_and_send_scheduled_blasts, daemon=True)
 _scheduler_thread.start()
