@@ -9,6 +9,7 @@ import shutil
 from copy import deepcopy
 from faker import Faker
 from datetime import datetime
+import threading
 from jinja2 import DictLoader
 import json
 import urllib.request
@@ -616,6 +617,60 @@ def _get_all_email_lists():
     return all_lists
 
 TEST_EMAIL_ADDRESS = "Chandlerhoffman497@gmail.com"
+
+# ==========================================================
+# BACKGROUND SCHEDULER: checks pending blasts every 30 seconds
+# ==========================================================
+_scheduler_lock = threading.Lock()
+
+def _check_and_send_scheduled_blasts():
+    """Run in a background thread. Every 30s, scan EMAIL_BLAST_SCHEDULES
+    for pending blasts whose scheduled_for time has passed, then send them."""
+    while True:
+        time.sleep(30)
+        now = datetime.now()
+        with _scheduler_lock:
+            for blast in EMAIL_BLAST_SCHEDULES:
+                if blast["status"] != "pending" or not blast.get("scheduled_for"):
+                    continue
+                try:
+                    sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%dT%H:%M")
+                except (ValueError, TypeError):
+                    try:
+                        sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%d %H:%M:%S")
+                    except (ValueError, TypeError):
+                        try:
+                            sched_dt = datetime.strptime(blast["scheduled_for"], "%Y-%m-%d %H:%M")
+                        except (ValueError, TypeError):
+                            logger.warning("Unparseable scheduled_for: %s", blast["scheduled_for"])
+                            continue
+                if now >= sched_dt:
+                    logger.info("Scheduler: sending blast #%s (scheduled for %s)", blast["id"], blast["scheduled_for"])
+                    blast["status"] = "sending"
+        # Send outside the lock to avoid blocking
+        blasts_to_send = [b for b in EMAIL_BLAST_SCHEDULES if b["status"] == "sending"]
+        for blast in blasts_to_send:
+            ok_count, fail_count = 0, 0
+            for em in blast.get("recipients", []):
+                try:
+                    ok, err = _send_blast_email(em, blast["subject"], blast["body"],
+                                                blast.get("from_name"), sender_email=blast.get("sender_email"))
+                    if ok:
+                        ok_count += 1
+                    else:
+                        fail_count += 1
+                except Exception:
+                    logger.exception("Scheduler: failed to send to %s", em)
+                    fail_count += 1
+            blast["status"] = "sent"
+            blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+            logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
+                        blast["id"], ok_count, fail_count)
+
+_scheduler_thread = threading.Thread(target=_check_and_send_scheduled_blasts, daemon=True)
+_scheduler_thread.start()
+logger.info("Email blast scheduler thread started.")
 
 # ==========================================================
 # JINJA TEMPLATES (inline, full UI)
@@ -3052,185 +3107,384 @@ app.jinja_loader = DictLoader({
       <style>
         .em-header {
           background: linear-gradient(135deg, #1e293b, #334155);
-          color: #fff;
-          border-radius: 20px;
-          padding: 2rem 2.5rem;
-          margin-bottom: 2rem;
+          color: #fff; border-radius: 20px; padding: 2rem 2.5rem; margin-bottom: 2rem;
           box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
         }
         .em-header h2 { font-weight: 700; margin-bottom: .25rem; }
         .em-header p { color: rgba(255,255,255,.7); margin: 0; }
-        .client-card {
-          background: #fff;
-          border-radius: 16px;
+        .client-card, .blast-card {
+          background: #fff; border-radius: 16px;
           border: 1px solid rgba(15, 23, 42, 0.08);
           box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-          margin-bottom: 1.5rem;
-          overflow: hidden;
+          margin-bottom: 1.5rem; overflow: hidden;
         }
-        .client-card-header {
+        .client-card-header, .blast-card-header {
           background: linear-gradient(135deg, rgba(59, 130, 246, .08), rgba(14, 165, 233, .06));
           padding: 1.25rem 1.5rem;
           border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
+          display: flex; align-items: center; justify-content: space-between;
+          font-weight: 700; color: #0f172a;
         }
         .client-card-header h5 { margin: 0; font-weight: 700; color: #0f172a; }
         .client-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: .25rem .65rem;
-          border-radius: 999px;
-          font-size: .75rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: .04em;
+          display: inline-flex; align-items: center; padding: .25rem .65rem;
+          border-radius: 999px; font-size: .75rem; font-weight: 700;
+          text-transform: uppercase; letter-spacing: .04em;
         }
         .badge-sci { background: rgba(249, 115, 22, .12); color: #c2410c; }
         .badge-munsie { background: rgba(16, 185, 129, .12); color: #047857; }
         .badge-generic { background: rgba(100, 116, 139, .12); color: #475569; }
         .badge-jobsdirect { background: rgba(124, 58, 237, .12); color: #6d28d9; }
-        .client-card-body { padding: 1.25rem 1.5rem; }
+        .client-card-body, .blast-card-body { padding: 1.25rem 1.5rem; }
         .em-section { margin-bottom: 1rem; }
         .em-section-title {
-          font-size: .85rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: .06em;
-          color: #64748b;
-          margin-bottom: .5rem;
+          font-size: .85rem; font-weight: 700; text-transform: uppercase;
+          letter-spacing: .06em; color: #64748b; margin-bottom: .5rem;
         }
         .em-empty {
-          background: rgba(241, 245, 249, .6);
-          border: 2px dashed #cbd5e1;
-          border-radius: 12px;
-          padding: 1rem 1.25rem;
-          color: #94a3b8;
-          font-size: .9rem;
-          text-align: center;
+          background: rgba(241, 245, 249, .6); border: 2px dashed #cbd5e1;
+          border-radius: 12px; padding: 1rem 1.25rem; color: #94a3b8;
+          font-size: .9rem; text-align: center;
         }
         .em-list-item {
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: .75rem 1rem;
-          margin-bottom: .5rem;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
+          background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+          padding: .75rem 1rem; margin-bottom: .5rem;
+          display: flex; align-items: center; justify-content: space-between;
         }
         .em-list-item .list-name { font-weight: 600; color: #0f172a; }
         .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
-        .schedule-item {
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: .75rem 1rem;
-          margin-bottom: .5rem;
-        }
-        .schedule-item .sched-subject { font-weight: 600; color: #0f172a; }
-        .schedule-item .sched-meta { font-size: .82rem; color: #64748b; }
-        .status-badge {
-          display: inline-block;
-          padding: .15rem .5rem;
-          border-radius: 999px;
-          font-size: .72rem;
-          font-weight: 700;
-          text-transform: uppercase;
-        }
-        .status-pending { background: rgba(251, 191, 36, .15); color: #b45309; }
-        .status-sent { background: rgba(34, 197, 94, .15); color: #15803d; }
-        .status-draft { background: rgba(148, 163, 184, .15); color: #475569; }
-        .upload-zone {
-          border: 2px dashed #93c5fd;
-          border-radius: 12px;
-          padding: 1rem;
-          text-align: center;
-          background: rgba(59, 130, 246, .04);
-          cursor: pointer;
-          transition: border-color .2s, background .2s;
-        }
-        .upload-zone:hover {
-          border-color: #3b82f6;
-          background: rgba(59, 130, 246, .08);
-        }
-        .upload-zone input[type="file"] { display: none; }
+        .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
+          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s; }
+        .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
+        .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
+          font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+        .sched-pending { background: rgba(251,191,36,.15); color: #b45309; }
+        .sched-sending { background: rgba(59,130,246,.15); color: #1d4ed8; }
+        .sched-sent { background: rgba(34,197,94,.15); color: #15803d; }
+        .sched-cancelled { background: rgba(239,68,68,.15); color: #dc2626; }
         .btn-em { border-radius: 10px; font-weight: 600; font-size: .85rem; }
+        #emailPreview { border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem;
+          background: #fafbfc; min-height: 120px; }
       </style>
 
       <div class="em-header">
         <h2>Email Manager</h2>
-        <p>Manage email lists and scheduling for all clients</p>
+        <p>Manage email lists, compose blasts, and schedule sends for all clients</p>
       </div>
 
-      {% if not clients %}
-        <div class="em-empty" style="padding: 3rem;">
-          <h5 style="color: #64748b;">No clients found</h5>
-          <p>Add client accounts via the Admin panel to start managing their emails.</p>
-        </div>
-      {% endif %}
+      <ul class="nav nav-tabs mb-4" id="emTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="lists-tab" data-bs-toggle="tab" data-bs-target="#lists-pane"
+            type="button" role="tab" aria-selected="true">Client Email Lists</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="compose-tab" data-bs-toggle="tab" data-bs-target="#compose-pane"
+            type="button" role="tab" aria-selected="false">Compose &amp; Schedule Blast</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-pane"
+            type="button" role="tab" aria-selected="false">Blast History <span class="badge bg-secondary ms-1">{{ blast_schedules|length }}</span></button>
+        </li>
+      </ul>
 
-      {% for client in clients %}
-        <div class="client-card">
-          <div class="client-card-header">
-            <div>
-              <h5>{{ client.username }}</h5>
-              <span class="client-badge badge-{{ client.brand }}">{{ client.brand }}</span>
-              <span style="font-size:.82rem; color:#64748b; margin-left:.5rem;">{{ client.role }}</span>
+      <div class="tab-content" id="emTabContent">
+        <!-- ====== TAB 1: Client Email Lists ====== -->
+        <div class="tab-pane fade show active" id="lists-pane" role="tabpanel">
+          {% if not clients %}
+            <div class="em-empty" style="padding: 3rem;">
+              <h5 style="color: #64748b;">No clients found</h5>
+              <p>Add client accounts via the Admin panel to start managing their emails.</p>
             </div>
-            <div>
-              <button class="btn btn-sm btn-outline-primary btn-em" onclick="document.getElementById('upload-{{ client.username }}').click()">
-                Upload Excel List
-              </button>
-              <form method="post" action="{{ url_for('adminchan_upload_list', client_username=client.username) }}" enctype="multipart/form-data" style="display:inline;" id="form-upload-{{ client.username }}">
-                <input type="file" name="excel_file" id="upload-{{ client.username }}" accept=".xlsx,.xls,.csv"
-                       onchange="document.getElementById('form-upload-{{ client.username }}').submit()">
+          {% endif %}
+
+          {% for client in clients %}
+            <div class="client-card">
+              <div class="client-card-header">
+                <div>
+                  <h5>{{ client.username }}</h5>
+                  <span class="client-badge badge-{{ client.brand }}">{{ client.brand }}</span>
+                  <span style="font-size:.82rem; color:#64748b; margin-left:.5rem;">{{ client.role }}</span>
+                </div>
+                <div>
+                  <button class="btn btn-sm btn-outline-primary btn-em" onclick="document.getElementById('upload-{{ client.username }}').click()">
+                    Upload Excel List
+                  </button>
+                  <form method="post" action="{{ url_for('adminchan_upload_list', client_username=client.username) }}" enctype="multipart/form-data" style="display:inline;" id="form-upload-{{ client.username }}">
+                    <input type="file" name="excel_file" id="upload-{{ client.username }}" accept=".xlsx,.xls,.csv"
+                           onchange="document.getElementById('form-upload-{{ client.username }}').submit()">
+                  </form>
+                </div>
+              </div>
+              <div class="client-card-body">
+                <div class="em-section">
+                  <div class="em-section-title">Email Lists</div>
+                  {% if client.email_data.lists %}
+                    {% for lst in client.email_data.lists %}
+                      <div class="em-list-item">
+                        <div>
+                          <span class="list-name">{{ lst.name }}</span>
+                          <span class="list-meta">&mdash; {{ lst.emails|length }} emails</span>
+                        </div>
+                        <div class="list-meta">Uploaded {{ lst.uploaded_at }}</div>
+                      </div>
+                    {% endfor %}
+                  {% else %}
+                    <div class="em-empty">No email lists yet. Upload an Excel sheet to get started.</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+
+        <!-- ====== TAB 2: Compose & Schedule Blast ====== -->
+        <div class="tab-pane fade" id="compose-pane" role="tabpanel">
+          {% if not email_lists %}
+            <div class="em-empty" style="padding: 2rem;">
+              <h5 style="color:#64748b;">No email lists available</h5>
+              <p>Upload email lists in the Client Email Lists tab first.</p>
+            </div>
+          {% else %}
+
+          <!-- Step 1: Choose List -->
+          <div class="blast-card">
+            <div class="blast-card-header">Step 1 &mdash; Select an Email List</div>
+            <div class="blast-card-body">
+              <select id="blastListSelect" class="form-select" onchange="blastListChanged()">
+                <option value="">-- choose a list --</option>
+                {% for lst in email_lists %}
+                  <option value="{{ loop.index0 }}"
+                    data-emails="{{ lst.emails | join('||') }}"
+                    data-sender="{{ lst.sender_email }}">
+                    {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails &mdash; sends from {{ lst.sender_email }}
+                  </option>
+                {% endfor %}
+              </select>
+              <div id="senderEmailInfo" class="mt-2" style="display:none;">
+                <span class="badge bg-info text-dark" style="font-size:.85rem;">
+                  Emails will be sent from: <strong id="senderEmailAddr"></strong>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Pick Recipients -->
+          <div class="blast-card" id="step2Card" style="display:none;">
+            <div class="blast-card-header">
+              Step 2 &mdash; Select Recipients
+              <span class="float-end">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="toggleAllEmails(true)">Select All</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="toggleAllEmails(false)">Deselect All</button>
+              </span>
+            </div>
+            <div class="blast-card-body">
+              <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
+              <div class="mt-2 text-muted" style="font-size:.82rem;">
+                <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Compose Email -->
+          <div class="blast-card" id="step3Card" style="display:none;">
+            <div class="blast-card-header">Step 3 &mdash; Compose Email</div>
+            <div class="blast-card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">Subject Line</label>
+                  <input type="text" id="blastSubject" class="form-control" placeholder="e.g. Spring Roofing Special!">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">From Name (optional)</label>
+                  <input type="text" id="blastFromName" class="form-control" placeholder="e.g. SCI Roofing">
+                </div>
+                <div class="col-12">
+                  <label class="form-label fw-bold">Email Body (HTML supported)</label>
+                  <textarea id="blastBody" class="form-control" rows="10"
+                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
+                </div>
+                <div class="col-12">
+                  <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
+                </div>
+                <div class="col-12" id="previewWrap" style="display:none;">
+                  <label class="form-label fw-bold">Email Preview</label>
+                  <div id="emailPreview"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4: Schedule / Send -->
+          <div class="blast-card" id="step4Card" style="display:none;">
+            <div class="blast-card-header">Step 4 &mdash; Schedule or Send</div>
+            <div class="blast-card-body">
+              <form method="post" action="{{ url_for('adminchan_blast_schedule') }}" id="blastForm">
+                <input type="hidden" name="list_index" id="hListIndex">
+                <input type="hidden" name="selected_emails" id="hSelectedEmails">
+                <input type="hidden" name="subject" id="hSubject">
+                <input type="hidden" name="from_name" id="hFromName">
+                <input type="hidden" name="body" id="hBody">
+
+                <div class="row g-3 align-items-end">
+                  <div class="col-md-5">
+                    <label class="form-label fw-bold">Schedule Date &amp; Time</label>
+                    <input type="datetime-local" name="scheduled_for" id="blastScheduleTime" class="form-control">
+                  </div>
+                  <div class="col-md-7 d-flex gap-2 flex-wrap">
+                    <button type="submit" name="action" value="schedule" class="btn btn-primary"
+                      onclick="return prepareBlastSubmit()">Schedule Blast</button>
+                    <button type="submit" name="action" value="send_now" class="btn btn-success"
+                      onclick="return prepareBlastSubmit()">Send Now</button>
+                    <button type="submit" name="action" value="test" class="btn btn-outline-warning"
+                      onclick="return prepareTestSubmit()">Send Test Email</button>
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <small class="text-muted">Test emails are sent to <strong>{{ test_email }}</strong></small>
+                </div>
               </form>
             </div>
           </div>
-          <div class="client-card-body">
-            <div class="em-section">
-              <div class="em-section-title">Email Lists</div>
-              {% if client.email_data.lists %}
-                {% for lst in client.email_data.lists %}
-                  <div class="em-list-item">
-                    <div>
-                      <span class="list-name">{{ lst.name }}</span>
-                      <span class="list-meta">&mdash; {{ lst.emails|length }} emails</span>
-                    </div>
-                    <div class="list-meta">Uploaded {{ lst.uploaded_at }}</div>
-                  </div>
-                {% endfor %}
-              {% else %}
-                <div class="em-empty">No email lists yet. Upload an Excel sheet to get started.</div>
-              {% endif %}
-            </div>
+          {% endif %}
+        </div>
 
-            <div class="em-section">
-              <div class="em-section-title">Scheduled Sends</div>
-              {% if client.email_data.schedules %}
-                {% for sched in client.email_data.schedules %}
-                  <div class="schedule-item">
-                    <div class="d-flex justify-content-between align-items-center">
-                      <div>
-                        <span class="sched-subject">{{ sched.subject or 'Untitled' }}</span>
-                        <span class="sched-meta">&mdash; List: {{ sched.list_name }}</span>
-                      </div>
-                      <div>
-                        <span class="status-badge status-{{ sched.status|lower }}">{{ sched.status }}</span>
-                        <span class="sched-meta ms-2">{{ sched.scheduled_for or 'Not scheduled' }}</span>
-                      </div>
-                    </div>
-                  </div>
-                {% endfor %}
-              {% else %}
-                <div class="em-empty">No scheduled sends. Schedules will appear here once configured.</div>
-              {% endif %}
+        <!-- ====== TAB 3: Blast History ====== -->
+        <div class="tab-pane fade" id="history-pane" role="tabpanel">
+          {% if blast_schedules %}
+          <div class="blast-card">
+            <div class="blast-card-header">Scheduled &amp; Sent Blasts</div>
+            <div class="blast-card-body">
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead><tr>
+                    <th>ID</th><th>Subject</th><th>List</th><th>Recipients</th>
+                    <th>Scheduled For</th><th>Status</th><th>Result</th><th class="text-end">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {% for b in blast_schedules %}
+                    <tr>
+                      <td>#{{ b.id }}</td>
+                      <td>{{ b.subject or 'No subject' }}</td>
+                      <td>{{ b.list_name }}</td>
+                      <td>{{ b.recipient_count }}</td>
+                      <td>{{ b.scheduled_for or 'Immediate' }}</td>
+                      <td><span class="sched-badge sched-{{ b.status|lower|replace(' ','-') }}">{{ b.status }}</span></td>
+                      <td style="font-size:.82rem;">{{ b.send_result or b.sent_at or '' }}</td>
+                      <td class="text-end">
+                        {% if b.status == 'pending' %}
+                        <form method="post" action="{{ url_for('adminchan_blast_action') }}" class="d-inline">
+                          <input type="hidden" name="blast_id" value="{{ b.id }}">
+                          <button name="action" value="send" class="btn btn-sm btn-outline-success"
+                            onclick="return confirm('Send this blast to {{ b.recipient_count }} recipients now?')">Send Now</button>
+                          <button name="action" value="cancel" class="btn btn-sm btn-outline-danger ms-1">Cancel</button>
+                        </form>
+                        {% endif %}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
+          {% else %}
+            <div class="em-empty" style="padding: 2rem;">
+              <h5 style="color:#64748b;">No blasts yet</h5>
+              <p>Compose and schedule your first email blast in the Compose tab.</p>
+            </div>
+          {% endif %}
         </div>
-      {% endfor %}
+      </div><!-- /tab-content -->
+
+      <script>
+        var currentEmails = [];
+        var selectedEmails = new Set();
+
+        function blastListChanged() {
+          var sel = document.getElementById('blastListSelect');
+          var opt = sel.options[sel.selectedIndex];
+          var step2 = document.getElementById('step2Card');
+          var step3 = document.getElementById('step3Card');
+          var step4 = document.getElementById('step4Card');
+          var senderInfo = document.getElementById('senderEmailInfo');
+          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; if(senderInfo) senderInfo.style.display='none'; return; }
+          var raw = opt.getAttribute('data-emails') || '';
+          var senderAddr = opt.getAttribute('data-sender') || 'default';
+          currentEmails = raw ? raw.split('||') : [];
+          selectedEmails = new Set(currentEmails);
+          renderChips();
+          step2.style.display=''; step3.style.display=''; step4.style.display='';
+          if(senderInfo) { senderInfo.style.display=''; document.getElementById('senderEmailAddr').textContent = senderAddr; }
+        }
+
+        function renderChips() {
+          var c = document.getElementById('emailChipsContainer');
+          c.innerHTML = '';
+          currentEmails.forEach(function(em) {
+            var chip = document.createElement('span');
+            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
+            chip.textContent = em;
+            chip.onclick = function() {
+              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
+              this.classList.toggle('selected');
+              updateCount();
+            };
+            c.appendChild(chip);
+          });
+          updateCount();
+        }
+
+        function toggleAllEmails(selectAll) {
+          if (selectAll) selectedEmails = new Set(currentEmails); else selectedEmails.clear();
+          renderChips();
+        }
+
+        function updateCount() {
+          document.getElementById('selectedCount').textContent = selectedEmails.size;
+          document.getElementById('totalCount').textContent = currentEmails.length;
+        }
+
+        function previewEmail() {
+          var subj = document.getElementById('blastSubject').value || 'No Subject';
+          var body = document.getElementById('blastBody').value || '';
+          var wrap = document.getElementById('previewWrap');
+          var prev = document.getElementById('emailPreview');
+          prev.innerHTML = '<h4 style="color:#2563eb;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</h4>'
+            + '<hr style="border:none;border-top:2px solid #e2e8f0;margin:8px 0 16px;">'
+            + '<div>' + body + '</div>'
+            + '<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0 8px;">'
+            + '<p style="font-size:12px;color:#94a3b8;">Email Blast Preview</p>';
+          wrap.style.display = '';
+        }
+
+        function prepareBlastSubmit() {
+          if (selectedEmails.size === 0) { alert('Please select at least one recipient.'); return false; }
+          var subj = document.getElementById('blastSubject').value.trim();
+          var body = document.getElementById('blastBody').value.trim();
+          if (!subj) { alert('Please enter a subject line.'); return false; }
+          if (!body) { alert('Please enter an email body.'); return false; }
+          document.getElementById('hListIndex').value = document.getElementById('blastListSelect').value;
+          document.getElementById('hSelectedEmails').value = Array.from(selectedEmails).join('||');
+          document.getElementById('hSubject').value = subj;
+          document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
+          document.getElementById('hBody').value = body;
+          return true;
+        }
+
+        function prepareTestSubmit() {
+          var subj = document.getElementById('blastSubject').value.trim();
+          var body = document.getElementById('blastBody').value.trim();
+          if (!subj) { alert('Please enter a subject line.'); return false; }
+          if (!body) { alert('Please enter an email body.'); return false; }
+          document.getElementById('hListIndex').value = document.getElementById('blastListSelect').value;
+          document.getElementById('hSelectedEmails').value = '';
+          document.getElementById('hSubject').value = subj;
+          document.getElementById('hFromName').value = document.getElementById('blastFromName').value.trim();
+          document.getElementById('hBody').value = body;
+          return true;
+        }
+      </script>
     {% endblock %}
     """,   
 
@@ -4979,6 +5233,9 @@ def adminchan_dashboard():
     return render_template("adminchan_dashboard.html",
                            title="Email Manager",
                            clients=clients,
+                           email_lists=_get_all_email_lists(),
+                           blast_schedules=EMAIL_BLAST_SCHEDULES,
+                           test_email=TEST_EMAIL_ADDRESS,
                            body_class="")
 
 @app.route("/adminchan/upload/<client_username>", methods=["POST"])
@@ -5027,6 +5284,140 @@ def adminchan_upload_list(client_username):
     except Exception as exc:
         logger.exception("Excel upload failed")
         flash(f"Failed to process file: {exc}")
+
+    return redirect(url_for("adminchan_dashboard"))
+
+
+@app.route("/adminchan/blast/schedule", methods=["POST"])
+def adminchan_blast_schedule():
+    if not require_login() or current_brand() != "adminchan":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    action = request.form.get("action", "")
+    list_index = request.form.get("list_index", "")
+    selected_raw = request.form.get("selected_emails", "")
+    subject = request.form.get("subject", "").strip()
+    from_name = request.form.get("from_name", "").strip()
+    body = request.form.get("body", "").strip()
+    scheduled_for = request.form.get("scheduled_for", "").strip()
+
+    all_lists = _get_all_email_lists()
+    list_owner = None
+    try:
+        idx = int(list_index) if list_index else -1
+        if 0 <= idx < len(all_lists):
+            list_owner = all_lists[idx].get("client")
+    except (ValueError, IndexError):
+        pass
+    sender_email = _get_sender_email_for_user(list_owner) if list_owner else SMTP_FROM_EMAIL
+
+    if action == "test":
+        if not subject or not body:
+            flash("Subject and body are required to send a test email.")
+            return redirect(url_for("adminchan_dashboard"))
+        ok, err = _send_blast_email(TEST_EMAIL_ADDRESS, f"[TEST] {subject}", body, from_name, sender_email=sender_email)
+        if ok:
+            flash(f"Test email sent to {TEST_EMAIL_ADDRESS} (from {sender_email}).")
+        else:
+            flash(f"Test email failed: {err}")
+        return redirect(url_for("adminchan_dashboard"))
+
+    if not selected_raw or not subject or not body:
+        flash("Subject, body, and at least one recipient are required.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    selected_emails = [e.strip() for e in selected_raw.split("||") if e.strip()]
+    if not selected_emails:
+        flash("No recipients selected.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    list_name = "Unknown"
+    try:
+        idx = int(list_index)
+        if 0 <= idx < len(all_lists):
+            list_name = f"{all_lists[idx]['name']} ({all_lists[idx]['client']})"
+    except (ValueError, IndexError):
+        pass
+
+    if action == "send_now":
+        ok_count, fail_count = 0, 0
+        for em in selected_emails:
+            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email)
+            if ok:
+                ok_count += 1
+            else:
+                fail_count += 1
+        blast = {
+            "id": _next_blast_id(),
+            "subject": subject,
+            "body": body,
+            "from_name": from_name,
+            "sender_email": sender_email,
+            "list_name": list_name,
+            "recipients": selected_emails,
+            "recipient_count": len(selected_emails),
+            "scheduled_for": None,
+            "status": "sent",
+            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "send_result": f"{ok_count} delivered, {fail_count} failed",
+        }
+        EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    if not scheduled_for:
+        flash("Please select a date and time for the scheduled blast.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    blast = {
+        "id": _next_blast_id(),
+        "subject": subject,
+        "body": body,
+        "from_name": from_name,
+        "sender_email": sender_email,
+        "list_name": list_name,
+        "recipients": selected_emails,
+        "recipient_count": len(selected_emails),
+        "scheduled_for": scheduled_for,
+        "status": "pending",
+        "sent_at": None,
+        "send_result": None,
+    }
+    EMAIL_BLAST_SCHEDULES.insert(0, blast)
+    flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
+    return redirect(url_for("adminchan_dashboard"))
+
+
+@app.route("/adminchan/blast/action", methods=["POST"])
+def adminchan_blast_action():
+    if not require_login() or current_brand() != "adminchan":
+        flash("Access denied.")
+        return redirect(url_for("login"))
+
+    blast_id = request.form.get("blast_id", type=int)
+    action = request.form.get("action", "")
+
+    blast = next((b for b in EMAIL_BLAST_SCHEDULES if b["id"] == blast_id), None)
+    if not blast:
+        flash("Blast not found.")
+        return redirect(url_for("adminchan_dashboard"))
+
+    if action == "cancel":
+        blast["status"] = "cancelled"
+        flash(f"Blast #{blast_id} cancelled.")
+    elif action == "send" and blast["status"] == "pending":
+        ok_count, fail_count = 0, 0
+        for em in blast["recipients"]:
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), sender_email=blast.get("sender_email"))
+            if ok:
+                ok_count += 1
+            else:
+                fail_count += 1
+        blast["status"] = "sent"
+        blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+        flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("adminchan_dashboard"))
 
