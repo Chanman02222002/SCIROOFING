@@ -1429,11 +1429,12 @@ app.jinja_loader = DictLoader({
         .blast-card-header { background: linear-gradient(135deg, rgba(59,130,246,.08), rgba(14,165,233,.05));
           padding: 1rem 1.25rem; border-bottom: 1px solid rgba(15,23,42,.06); font-weight: 700; color: #0f172a; }
         .blast-card-body { padding: 1.25rem; }
-        .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
-          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s;
-          user-select: none; -webkit-user-select: none; }
-        .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
-        .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .email-row { display: block; padding: 1px 8px; font-size: .82rem; cursor: pointer;
+          user-select: none; -webkit-user-select: none; color: #1e40af; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+        .email-row:nth-child(even) { background: #f8fafc; }
+        .email-row.selected { background: #2563eb; color: #fff; }
+        .email-row:hover:not(.selected) { background: #eff6ff; }
         .drag-hint { font-size: .75rem; color: #94a3b8; font-style: italic; }
         .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
           font-size: .72rem; font-weight: 700; text-transform: uppercase; }
@@ -1570,7 +1571,7 @@ app.jinja_loader = DictLoader({
             </div>
             <div class="blast-card-body">
               <div class="drag-hint mb-1">Click to toggle, or click &amp; drag to select/deselect multiple at once</div>
-              <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
+              <div id="emailChipsContainer" style="max-height:400px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;"></div>
               <div class="mt-2 text-muted" style="font-size:.82rem;">
                 <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
               </div>
@@ -1728,15 +1729,15 @@ app.jinja_loader = DictLoader({
           }
         }
 
-        function applyDragToChip(chip, em) {
+        function applyDragToRow(row, em) {
           if (dragProcessed.has(em)) return;
           dragProcessed.add(em);
           if (dragMode === 'select') {
             selectedEmails.add(em);
-            chip.classList.add('selected');
+            row.classList.add('selected');
           } else {
             selectedEmails.delete(em);
-            chip.classList.remove('selected');
+            row.classList.remove('selected');
           }
           updateCount();
         }
@@ -1744,43 +1745,46 @@ app.jinja_loader = DictLoader({
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
+          var frag = document.createDocumentFragment();
           currentEmails.forEach(function(em) {
-            var chip = document.createElement('span');
-            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-            chip.textContent = em;
-            // Drag-select: mousedown starts drag
-            chip.addEventListener('mousedown', function(e) {
-              e.preventDefault();
-              isDragging = true;
-              dragProcessed = new Set();
-              // If chip is selected, drag will deselect; if unselected, drag will select
-              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
-              applyDragToChip(chip, em);
-            });
-            // Drag-select: mouseover while dragging
-            chip.addEventListener('mouseenter', function(e) {
-              if (isDragging) {
-                applyDragToChip(chip, em);
-              }
-            });
-            // Touch support for mobile
-            chip.addEventListener('touchstart', function(e) {
-              isDragging = true;
-              dragProcessed = new Set();
-              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
-              applyDragToChip(chip, em);
-            }, {passive: true});
-            chip.addEventListener('touchmove', function(e) {
-              if (!isDragging) return;
-              var touch = e.touches[0];
-              var el = document.elementFromPoint(touch.clientX, touch.clientY);
-              if (el && el.classList.contains('email-chip') && el.dataset.email) {
-                applyDragToChip(el, el.dataset.email);
-              }
-            }, {passive: true});
-            chip.dataset.email = em;
-            c.appendChild(chip);
+            var row = document.createElement('div');
+            row.className = 'email-row' + (selectedEmails.has(em) ? ' selected' : '');
+            row.textContent = em;
+            row.dataset.email = em;
+            frag.appendChild(row);
           });
+          c.appendChild(frag);
+          // Single delegated listener on container for mouse/touch drag
+          c.onmousedown = function(e) {
+            var row = e.target.closest('.email-row');
+            if (!row) return;
+            e.preventDefault();
+            isDragging = true;
+            dragProcessed = new Set();
+            var em = row.dataset.email;
+            dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+            applyDragToRow(row, em);
+          };
+          c.onmouseover = function(e) {
+            if (!isDragging) return;
+            var row = e.target.closest('.email-row');
+            if (row) applyDragToRow(row, row.dataset.email);
+          };
+          c.ontouchstart = function(e) {
+            var row = e.target.closest('.email-row');
+            if (!row) return;
+            isDragging = true;
+            dragProcessed = new Set();
+            var em = row.dataset.email;
+            dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+            applyDragToRow(row, em);
+          };
+          c.ontouchmove = function(e) {
+            if (!isDragging) return;
+            var touch = e.touches[0];
+            var el = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (el) { var row = el.closest('.email-row'); if (row) applyDragToRow(row, row.dataset.email); }
+          };
           updateCount();
         }
 
@@ -3242,11 +3246,12 @@ app.jinja_loader = DictLoader({
         }
         .em-list-item .list-name { font-weight: 600; color: #0f172a; }
         .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
-        .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
-          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s;
-          user-select: none; -webkit-user-select: none; }
-        .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
-        .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .email-row { display: block; padding: 1px 8px; font-size: .82rem; cursor: pointer;
+          user-select: none; -webkit-user-select: none; color: #1e40af; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+        .email-row:nth-child(even) { background: #f8fafc; }
+        .email-row.selected { background: #2563eb; color: #fff; }
+        .email-row:hover:not(.selected) { background: #eff6ff; }
         .drag-hint { font-size: .75rem; color: #94a3b8; font-style: italic; }
         .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
           font-size: .72rem; font-weight: 700; text-transform: uppercase; }
@@ -3372,7 +3377,7 @@ app.jinja_loader = DictLoader({
             </div>
             <div class="blast-card-body">
               <div class="drag-hint mb-1">Click to toggle, or click &amp; drag to select/deselect multiple at once</div>
-              <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
+              <div id="emailChipsContainer" style="max-height:400px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;"></div>
               <div class="mt-2 text-muted" style="font-size:.82rem;">
                 <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
               </div>
@@ -3536,15 +3541,15 @@ app.jinja_loader = DictLoader({
           }
         }
 
-        function applyDragToChip(chip, em) {
+        function applyDragToRow(row, em) {
           if (dragProcessed.has(em)) return;
           dragProcessed.add(em);
           if (dragMode === 'select') {
             selectedEmails.add(em);
-            chip.classList.add('selected');
+            row.classList.add('selected');
           } else {
             selectedEmails.delete(em);
-            chip.classList.remove('selected');
+            row.classList.remove('selected');
           }
           updateCount();
         }
@@ -3552,39 +3557,45 @@ app.jinja_loader = DictLoader({
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
+          var frag = document.createDocumentFragment();
           currentEmails.forEach(function(em) {
-            var chip = document.createElement('span');
-            chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
-            chip.textContent = em;
-            chip.addEventListener('mousedown', function(e) {
-              e.preventDefault();
-              isDragging = true;
-              dragProcessed = new Set();
-              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
-              applyDragToChip(chip, em);
-            });
-            chip.addEventListener('mouseenter', function(e) {
-              if (isDragging) {
-                applyDragToChip(chip, em);
-              }
-            });
-            chip.addEventListener('touchstart', function(e) {
-              isDragging = true;
-              dragProcessed = new Set();
-              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
-              applyDragToChip(chip, em);
-            }, {passive: true});
-            chip.addEventListener('touchmove', function(e) {
-              if (!isDragging) return;
-              var touch = e.touches[0];
-              var el = document.elementFromPoint(touch.clientX, touch.clientY);
-              if (el && el.classList.contains('email-chip') && el.dataset.email) {
-                applyDragToChip(el, el.dataset.email);
-              }
-            }, {passive: true});
-            chip.dataset.email = em;
-            c.appendChild(chip);
+            var row = document.createElement('div');
+            row.className = 'email-row' + (selectedEmails.has(em) ? ' selected' : '');
+            row.textContent = em;
+            row.dataset.email = em;
+            frag.appendChild(row);
           });
+          c.appendChild(frag);
+          c.onmousedown = function(e) {
+            var row = e.target.closest('.email-row');
+            if (!row) return;
+            e.preventDefault();
+            isDragging = true;
+            dragProcessed = new Set();
+            var em = row.dataset.email;
+            dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+            applyDragToRow(row, em);
+          };
+          c.onmouseover = function(e) {
+            if (!isDragging) return;
+            var row = e.target.closest('.email-row');
+            if (row) applyDragToRow(row, row.dataset.email);
+          };
+          c.ontouchstart = function(e) {
+            var row = e.target.closest('.email-row');
+            if (!row) return;
+            isDragging = true;
+            dragProcessed = new Set();
+            var em = row.dataset.email;
+            dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+            applyDragToRow(row, em);
+          };
+          c.ontouchmove = function(e) {
+            if (!isDragging) return;
+            var touch = e.touches[0];
+            var el = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (el) { var row = el.closest('.email-row'); if (row) applyDragToRow(row, row.dataset.email); }
+          };
           updateCount();
         }
 
