@@ -611,6 +611,8 @@ def _get_all_email_lists():
                 "client": uname,
                 "name": lst["name"],
                 "emails": lst["emails"],
+                "row_data": lst.get("row_data", {}),
+                "columns": lst.get("columns", []),
                 "uploaded_at": lst.get("uploaded_at", ""),
                 "sender_email": sender,
             })
@@ -654,10 +656,12 @@ def _check_and_send_scheduled_blasts():
             # Send outside the lock to avoid blocking
             for blast in blasts_to_send:
                 ok_count, fail_count = 0, 0
+                blast_row_data = blast.get("row_data", {})
                 for em in blast.get("recipients", []):
                     try:
                         ok, err = _send_blast_email(em, blast["subject"], blast["body"],
-                                                    blast.get("from_name"), sender_email=blast.get("sender_email"))
+                                                    blast.get("from_name"), sender_email=blast.get("sender_email"),
+                                                    recipient_data=blast_row_data.get(em))
                         if ok:
                             ok_count += 1
                         else:
@@ -1539,7 +1543,8 @@ app.jinja_loader = DictLoader({
                 {% for lst in email_lists %}
                   <option value="{{ loop.index0 }}"
                     data-emails="{{ lst.emails | join('||') }}"
-                    data-sender="{{ lst.sender_email }}">
+                    data-sender="{{ lst.sender_email }}"
+                    data-columns="{{ lst.columns | join('||') }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails &mdash; sends from {{ lst.sender_email }}
                   </option>
                 {% endfor %}
@@ -1585,7 +1590,10 @@ app.jinja_loader = DictLoader({
                 <div class="col-12">
                   <label class="form-label fw-bold">Email Body (HTML supported)</label>
                   <textarea id="blastBody" class="form-control" rows="10"
-                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
+                    placeholder="Write your email content here. You can use HTML for formatting. Use [ColumnName] for personalization (e.g. Dear [Name],)."></textarea>
+                  <div id="placeholderHint" class="mt-1" style="display:none;">
+                    <small class="text-muted">Available placeholders: <span id="placeholderList" style="font-weight:600; color:#2563eb;"></span></small>
+                  </div>
                 </div>
                 <div class="col-12">
                   <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
@@ -1685,14 +1693,33 @@ app.jinja_loader = DictLoader({
           var step3 = document.getElementById('step3Card');
           var step4 = document.getElementById('step4Card');
           var senderInfo = document.getElementById('senderEmailInfo');
-          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; if(senderInfo) senderInfo.style.display='none'; return; }
+          var placeholderHint = document.getElementById('placeholderHint');
+          if (!opt.value) {
+            step2.style.display='none'; step3.style.display='none'; step4.style.display='none';
+            if(senderInfo) senderInfo.style.display='none';
+            if(placeholderHint) placeholderHint.style.display='none';
+            return;
+          }
           var raw = opt.getAttribute('data-emails') || '';
           var senderAddr = opt.getAttribute('data-sender') || 'default';
+          var colsRaw = opt.getAttribute('data-columns') || '';
           currentEmails = raw ? raw.split('||') : [];
           selectedEmails = new Set(currentEmails);
           renderChips();
           step2.style.display=''; step3.style.display=''; step4.style.display='';
           if(senderInfo) { senderInfo.style.display=''; document.getElementById('senderEmailAddr').textContent = senderAddr; }
+          // Show available placeholder columns
+          if (placeholderHint && colsRaw) {
+            var cols = colsRaw.split('||').filter(function(c) { return c.trim(); });
+            if (cols.length > 0) {
+              document.getElementById('placeholderList').textContent = cols.map(function(c) { return '[' + c + ']'; }).join('  ');
+              placeholderHint.style.display = '';
+            } else {
+              placeholderHint.style.display = 'none';
+            }
+          } else if (placeholderHint) {
+            placeholderHint.style.display = 'none';
+          }
         }
 
         function renderChips() {
@@ -3261,7 +3288,8 @@ app.jinja_loader = DictLoader({
                 {% for lst in email_lists %}
                   <option value="{{ loop.index0 }}"
                     data-emails="{{ lst.emails | join('||') }}"
-                    data-sender="{{ lst.sender_email }}">
+                    data-sender="{{ lst.sender_email }}"
+                    data-columns="{{ lst.columns | join('||') }}">
                     {{ lst.name }} ({{ lst.client }}) &mdash; {{ lst.emails|length }} emails &mdash; sends from {{ lst.sender_email }}
                   </option>
                 {% endfor %}
@@ -3307,7 +3335,10 @@ app.jinja_loader = DictLoader({
                 <div class="col-12">
                   <label class="form-label fw-bold">Email Body (HTML supported)</label>
                   <textarea id="blastBody" class="form-control" rows="10"
-                    placeholder="Write your email content here. You can use HTML for formatting."></textarea>
+                    placeholder="Write your email content here. You can use HTML for formatting. Use [ColumnName] for personalization (e.g. Dear [Name],)."></textarea>
+                  <div id="placeholderHint" class="mt-1" style="display:none;">
+                    <small class="text-muted">Available placeholders: <span id="placeholderList" style="font-weight:600; color:#2563eb;"></span></small>
+                  </div>
                 </div>
                 <div class="col-12">
                   <button type="button" class="btn btn-outline-secondary btn-sm" onclick="previewEmail()">Preview Email</button>
@@ -3413,14 +3444,33 @@ app.jinja_loader = DictLoader({
           var step3 = document.getElementById('step3Card');
           var step4 = document.getElementById('step4Card');
           var senderInfo = document.getElementById('senderEmailInfo');
-          if (!opt.value) { step2.style.display='none'; step3.style.display='none'; step4.style.display='none'; if(senderInfo) senderInfo.style.display='none'; return; }
+          var placeholderHint = document.getElementById('placeholderHint');
+          if (!opt.value) {
+            step2.style.display='none'; step3.style.display='none'; step4.style.display='none';
+            if(senderInfo) senderInfo.style.display='none';
+            if(placeholderHint) placeholderHint.style.display='none';
+            return;
+          }
           var raw = opt.getAttribute('data-emails') || '';
           var senderAddr = opt.getAttribute('data-sender') || 'default';
+          var colsRaw = opt.getAttribute('data-columns') || '';
           currentEmails = raw ? raw.split('||') : [];
           selectedEmails = new Set(currentEmails);
           renderChips();
           step2.style.display=''; step3.style.display=''; step4.style.display='';
           if(senderInfo) { senderInfo.style.display=''; document.getElementById('senderEmailAddr').textContent = senderAddr; }
+          // Show available placeholder columns
+          if (placeholderHint && colsRaw) {
+            var cols = colsRaw.split('||').filter(function(c) { return c.trim(); });
+            if (cols.length > 0) {
+              document.getElementById('placeholderList').textContent = cols.map(function(c) { return '[' + c + ']'; }).join('  ');
+              placeholderHint.style.display = '';
+            } else {
+              placeholderHint.style.display = 'none';
+            }
+          } else if (placeholderHint) {
+            placeholderHint.style.display = 'none';
+          }
         }
 
         function renderChips() {
@@ -3491,7 +3541,7 @@ app.jinja_loader = DictLoader({
         }
       </script>
     {% endblock %}
-    """,   
+    """,
 
 
     # ---------- JOBSDIRECT DASHBOARD ----------
@@ -5273,16 +5323,29 @@ def adminchan_upload_list(client_username):
                 break
 
         emails = []
+        row_data = {}  # email -> {col: value, ...} for placeholder replacement
+        all_columns = [str(c) for c in df.columns]
+
         if email_col:
-            emails = [str(v).strip() for v in df[email_col].dropna().tolist() if str(v).strip()]
+            for _, row in df.iterrows():
+                email_val = str(row[email_col]).strip() if pd.notna(row[email_col]) else ""
+                if email_val:
+                    emails.append(email_val)
+                    row_data[email_val] = {str(c): str(row[c]).strip() if pd.notna(row[c]) else "" for c in df.columns}
         else:
             # Fallback: take first column as emails
-            emails = [str(v).strip() for v in df.iloc[:, 0].dropna().tolist() if str(v).strip()]
+            for _, row in df.iterrows():
+                email_val = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+                if email_val:
+                    emails.append(email_val)
+                    row_data[email_val] = {str(c): str(row[c]).strip() if pd.notna(row[c]) else "" for c in df.columns}
 
         data = _get_client_email_data(client_username)
         data["lists"].append({
             "name": f.filename,
             "emails": emails,
+            "row_data": row_data,
+            "columns": all_columns,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
@@ -5317,6 +5380,15 @@ def adminchan_blast_schedule():
         pass
     sender_email = _get_sender_email_for_user(list_owner) if list_owner else SMTP_FROM_EMAIL
 
+    # Get row_data for placeholder replacement (e.g. [Name], [Company], etc.)
+    list_row_data = {}
+    try:
+        idx = int(list_index) if list_index else -1
+        if 0 <= idx < len(all_lists):
+            list_row_data = all_lists[idx].get("row_data", {})
+    except (ValueError, IndexError):
+        pass
+
     if action == "test":
         if not subject or not body:
             flash("Subject and body are required to send a test email.")
@@ -5348,7 +5420,8 @@ def adminchan_blast_schedule():
     if action == "send_now":
         ok_count, fail_count = 0, 0
         for em in selected_emails:
-            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email)
+            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email,
+                                        recipient_data=list_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
@@ -5361,6 +5434,7 @@ def adminchan_blast_schedule():
             "sender_email": sender_email,
             "list_name": list_name,
             "recipients": selected_emails,
+            "row_data": list_row_data,
             "recipient_count": len(selected_emails),
             "scheduled_for": None,
             "status": "sent",
@@ -5383,6 +5457,7 @@ def adminchan_blast_schedule():
         "sender_email": sender_email,
         "list_name": list_name,
         "recipients": selected_emails,
+        "row_data": list_row_data,
         "recipient_count": len(selected_emails),
         "scheduled_for": scheduled_for,
         "status": "pending",
@@ -5413,8 +5488,11 @@ def adminchan_blast_action():
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
+        blast_row_data = blast.get("row_data", {})
         for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), sender_email=blast.get("sender_email"))
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"),
+                                      sender_email=blast.get("sender_email"),
+                                      recipient_data=blast_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
@@ -5508,8 +5586,21 @@ def admin_delete():
 
 
 # -------- Email Blast Scheduler routes --------
-def _send_blast_email(to_email, subject, body_html, from_name=None, sender_email=None):
-    """Send a single blast email. Returns (success: bool, error: str|None)."""
+def _replace_placeholders(text, recipient_data):
+    """Replace [ColumnName] placeholders in text with values from recipient_data dict."""
+    if not recipient_data:
+        return text
+    for col_name, value in recipient_data.items():
+        text = text.replace(f"[{col_name}]", value)
+    return text
+
+
+def _send_blast_email(to_email, subject, body_html, from_name=None, sender_email=None, recipient_data=None):
+    """Send a single blast email. Returns (success: bool, error: str|None).
+    If recipient_data is provided, [ColumnName] placeholders in body_html and subject are replaced."""
+    # Replace placeholders with per-recipient data
+    body_html = _replace_placeholders(body_html, recipient_data)
+    subject = _replace_placeholders(subject, recipient_data)
     effective_from = sender_email or SMTP_FROM_EMAIL
     from_addr = f"{from_name} <{effective_from}>" if from_name else effective_from
     try:
@@ -5569,6 +5660,15 @@ def admin_blast_schedule():
         pass
     sender_email = _get_sender_email_for_user(list_owner) if list_owner else SMTP_FROM_EMAIL
 
+    # Get row_data for placeholder replacement (e.g. [Name], [Company], etc.)
+    list_row_data = {}
+    try:
+        idx = int(list_index) if list_index else -1
+        if 0 <= idx < len(all_lists):
+            list_row_data = all_lists[idx].get("row_data", {})
+    except (ValueError, IndexError):
+        pass
+
     # Test emails only need subject and body - no recipients required
     if action == "test":
         if not subject or not body:
@@ -5603,7 +5703,8 @@ def admin_blast_schedule():
         # Send immediately to all selected recipients
         ok_count, fail_count = 0, 0
         for em in selected_emails:
-            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email)
+            ok, err = _send_blast_email(em, subject, body, from_name, sender_email=sender_email,
+                                        recipient_data=list_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
@@ -5617,6 +5718,7 @@ def admin_blast_schedule():
             "sender_email": sender_email,
             "list_name": list_name,
             "recipients": selected_emails,
+            "row_data": list_row_data,
             "recipient_count": len(selected_emails),
             "scheduled_for": None,
             "status": "sent",
@@ -5639,6 +5741,7 @@ def admin_blast_schedule():
         "sender_email": sender_email,
         "list_name": list_name,
         "recipients": selected_emails,
+        "row_data": list_row_data,
         "recipient_count": len(selected_emails),
         "scheduled_for": scheduled_for,
         "status": "pending",
@@ -5668,8 +5771,11 @@ def admin_blast_action():
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
+        blast_row_data = blast.get("row_data", {})
         for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"), sender_email=blast.get("sender_email"))
+            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"),
+                                      sender_email=blast.get("sender_email"),
+                                      recipient_data=blast_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
