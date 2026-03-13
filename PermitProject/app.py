@@ -1430,9 +1430,11 @@ app.jinja_loader = DictLoader({
           padding: 1rem 1.25rem; border-bottom: 1px solid rgba(15,23,42,.06); font-weight: 700; color: #0f172a; }
         .blast-card-body { padding: 1.25rem; }
         .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
-          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s; }
+          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s;
+          user-select: none; -webkit-user-select: none; }
         .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
         .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .drag-hint { font-size: .75rem; color: #94a3b8; font-style: italic; }
         .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
           font-size: .72rem; font-weight: 700; text-transform: uppercase; }
         .sched-pending { background: rgba(251,191,36,.15); color: #b45309; }
@@ -1567,6 +1569,7 @@ app.jinja_loader = DictLoader({
               </span>
             </div>
             <div class="blast-card-body">
+              <div class="drag-hint mb-1">Click to toggle, or click &amp; drag to select/deselect multiple at once</div>
               <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
               <div class="mt-2 text-muted" style="font-size:.82rem;">
                 <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
@@ -1685,6 +1688,9 @@ app.jinja_loader = DictLoader({
         // --- Email Blast Scheduler JS ---
         var currentEmails = [];
         var selectedEmails = new Set();
+        var isDragging = false;
+        var dragMode = null; // 'select' or 'deselect'
+        var dragProcessed = new Set(); // track chips already toggled in this drag
 
         function blastListChanged() {
           var sel = document.getElementById('blastListSelect');
@@ -1722,6 +1728,19 @@ app.jinja_loader = DictLoader({
           }
         }
 
+        function applyDragToChip(chip, em) {
+          if (dragProcessed.has(em)) return;
+          dragProcessed.add(em);
+          if (dragMode === 'select') {
+            selectedEmails.add(em);
+            chip.classList.add('selected');
+          } else {
+            selectedEmails.delete(em);
+            chip.classList.remove('selected');
+          }
+          updateCount();
+        }
+
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
@@ -1729,15 +1748,53 @@ app.jinja_loader = DictLoader({
             var chip = document.createElement('span');
             chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
             chip.textContent = em;
-            chip.onclick = function() {
-              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-              this.classList.toggle('selected');
-              updateCount();
-            };
+            // Drag-select: mousedown starts drag
+            chip.addEventListener('mousedown', function(e) {
+              e.preventDefault();
+              isDragging = true;
+              dragProcessed = new Set();
+              // If chip is selected, drag will deselect; if unselected, drag will select
+              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+              applyDragToChip(chip, em);
+            });
+            // Drag-select: mouseover while dragging
+            chip.addEventListener('mouseenter', function(e) {
+              if (isDragging) {
+                applyDragToChip(chip, em);
+              }
+            });
+            // Touch support for mobile
+            chip.addEventListener('touchstart', function(e) {
+              isDragging = true;
+              dragProcessed = new Set();
+              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+              applyDragToChip(chip, em);
+            }, {passive: true});
+            chip.addEventListener('touchmove', function(e) {
+              if (!isDragging) return;
+              var touch = e.touches[0];
+              var el = document.elementFromPoint(touch.clientX, touch.clientY);
+              if (el && el.classList.contains('email-chip') && el.dataset.email) {
+                applyDragToChip(el, el.dataset.email);
+              }
+            }, {passive: true});
+            chip.dataset.email = em;
             c.appendChild(chip);
           });
           updateCount();
         }
+
+        // End drag on mouseup anywhere
+        document.addEventListener('mouseup', function() {
+          isDragging = false;
+          dragMode = null;
+          dragProcessed = new Set();
+        });
+        document.addEventListener('touchend', function() {
+          isDragging = false;
+          dragMode = null;
+          dragProcessed = new Set();
+        });
 
         function toggleAllEmails(selectAll) {
           if (selectAll) selectedEmails = new Set(currentEmails); else selectedEmails.clear();
@@ -3186,9 +3243,11 @@ app.jinja_loader = DictLoader({
         .em-list-item .list-name { font-weight: 600; color: #0f172a; }
         .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
         .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
-          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s; }
+          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s;
+          user-select: none; -webkit-user-select: none; }
         .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
         .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .drag-hint { font-size: .75rem; color: #94a3b8; font-style: italic; }
         .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
           font-size: .72rem; font-weight: 700; text-transform: uppercase; }
         .sched-pending { background: rgba(251,191,36,.15); color: #b45309; }
@@ -3312,6 +3371,7 @@ app.jinja_loader = DictLoader({
               </span>
             </div>
             <div class="blast-card-body">
+              <div class="drag-hint mb-1">Click to toggle, or click &amp; drag to select/deselect multiple at once</div>
               <div id="emailChipsContainer" style="max-height:260px; overflow-y:auto;"></div>
               <div class="mt-2 text-muted" style="font-size:.82rem;">
                 <span id="selectedCount">0</span> of <span id="totalCount">0</span> selected
@@ -3436,6 +3496,9 @@ app.jinja_loader = DictLoader({
       <script>
         var currentEmails = [];
         var selectedEmails = new Set();
+        var isDragging = false;
+        var dragMode = null;
+        var dragProcessed = new Set();
 
         function blastListChanged() {
           var sel = document.getElementById('blastListSelect');
@@ -3473,6 +3536,19 @@ app.jinja_loader = DictLoader({
           }
         }
 
+        function applyDragToChip(chip, em) {
+          if (dragProcessed.has(em)) return;
+          dragProcessed.add(em);
+          if (dragMode === 'select') {
+            selectedEmails.add(em);
+            chip.classList.add('selected');
+          } else {
+            selectedEmails.delete(em);
+            chip.classList.remove('selected');
+          }
+          updateCount();
+        }
+
         function renderChips() {
           var c = document.getElementById('emailChipsContainer');
           c.innerHTML = '';
@@ -3480,15 +3556,48 @@ app.jinja_loader = DictLoader({
             var chip = document.createElement('span');
             chip.className = 'email-chip' + (selectedEmails.has(em) ? ' selected' : '');
             chip.textContent = em;
-            chip.onclick = function() {
-              if (selectedEmails.has(em)) selectedEmails.delete(em); else selectedEmails.add(em);
-              this.classList.toggle('selected');
-              updateCount();
-            };
+            chip.addEventListener('mousedown', function(e) {
+              e.preventDefault();
+              isDragging = true;
+              dragProcessed = new Set();
+              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+              applyDragToChip(chip, em);
+            });
+            chip.addEventListener('mouseenter', function(e) {
+              if (isDragging) {
+                applyDragToChip(chip, em);
+              }
+            });
+            chip.addEventListener('touchstart', function(e) {
+              isDragging = true;
+              dragProcessed = new Set();
+              dragMode = selectedEmails.has(em) ? 'deselect' : 'select';
+              applyDragToChip(chip, em);
+            }, {passive: true});
+            chip.addEventListener('touchmove', function(e) {
+              if (!isDragging) return;
+              var touch = e.touches[0];
+              var el = document.elementFromPoint(touch.clientX, touch.clientY);
+              if (el && el.classList.contains('email-chip') && el.dataset.email) {
+                applyDragToChip(el, el.dataset.email);
+              }
+            }, {passive: true});
+            chip.dataset.email = em;
             c.appendChild(chip);
           });
           updateCount();
         }
+
+        document.addEventListener('mouseup', function() {
+          isDragging = false;
+          dragMode = null;
+          dragProcessed = new Set();
+        });
+        document.addEventListener('touchend', function() {
+          isDragging = false;
+          dragMode = null;
+          dragProcessed = new Set();
+        });
 
         function toggleAllEmails(selectAll) {
           if (selectAll) selectedEmails = new Set(currentEmails); else selectedEmails.clear();
