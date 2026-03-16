@@ -3242,11 +3242,17 @@ app.jinja_loader = DictLoader({
         }
         .em-list-item .list-name { font-weight: 600; color: #0f172a; }
         .em-list-item .list-meta { font-size: .82rem; color: #64748b; }
-        .email-chip { display: inline-block; background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;
-          border-radius: 999px; padding: .2rem .6rem; font-size: .78rem; margin: .15rem; cursor: pointer; transition: all .15s;
+        #emailChipsContainer { display: flex; flex-direction: column; }
+        .email-chip { display: block; background: #f8fafc; color: #1e40af; border: 1px solid #e2e8f0;
+          border-bottom: none; padding: .4rem .75rem; font-size: .82rem; cursor: pointer; transition: background .1s, color .1s;
           user-select: none; -webkit-user-select: none; }
+        .email-chip:first-child { border-radius: 6px 6px 0 0; }
+        .email-chip:last-child { border-bottom: 1px solid #e2e8f0; border-radius: 0 0 6px 6px; }
+        .email-chip:only-child { border-radius: 6px; border-bottom: 1px solid #e2e8f0; }
         .email-chip.selected { background: #2563eb; color: #fff; border-color: #2563eb; }
-        .email-chip:hover { box-shadow: 0 2px 6px rgba(37,99,235,.2); }
+        .email-chip.selected + .email-chip:not(.selected) { border-top-color: #e2e8f0; }
+        .email-chip:hover:not(.selected) { background: #eff6ff; }
+        .email-chip.selected:hover { background: #1d4ed8; }
         .drag-hint { font-size: .75rem; color: #94a3b8; font-style: italic; }
         .sched-badge { display: inline-block; padding: .2rem .55rem; border-radius: 999px;
           font-size: .72rem; font-weight: 700; text-transform: uppercase; }
