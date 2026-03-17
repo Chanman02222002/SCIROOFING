@@ -33,9 +33,254 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
+
+# ==========================================================
+# DATABASE (PostgreSQL via DATABASE_URL from Railway)
+# ==========================================================
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# Railway sometimes provides postgres:// but SQLAlchemy needs postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+if DATABASE_URL:
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+else:
+    # Fallback to local SQLite for development when no DATABASE_URL is set
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///sciroofing.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db = SQLAlchemy(app)
+
+# ---------- Models ----------
+
+class DbUser(db.Model):
+    __tablename__ = "users"
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default="client")
+    brand = db.Column(db.String(40), nullable=False, default="generic")
+    sender_email = db.Column(db.String(200), default="")
+
+class PropertyNote(db.Model):
+    __tablename__ = "property_notes"
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False)
+    property_id = db.Column(db.Integer, nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.String(30), nullable=False)
+
+class PropertyEdit(db.Model):
+    __tablename__ = "property_edits"
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False)
+    property_id = db.Column(db.Integer, nullable=False)
+    field_name = db.Column(db.String(80), nullable=False)
+    field_value = db.Column(db.Text, default="")
+
+class PropertyContact(db.Model):
+    __tablename__ = "property_contacts"
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), nullable=False)
+    property_id = db.Column(db.Integer, nullable=False)
+    name = db.Column(db.String(200), default="")
+    email = db.Column(db.String(200), default="")
+    phone = db.Column(db.String(50), default="")
+    job_title = db.Column(db.String(200), default="")
+
+class DbEmailList(db.Model):
+    __tablename__ = "email_lists"
+    id = db.Column(db.Integer, primary_key=True)
+    client_username = db.Column(db.String(80), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    uploaded_at = db.Column(db.String(30), default="")
+    columns_json = db.Column(db.Text, default="[]")
+    emails_json = db.Column(db.Text, default="[]")
+    row_data_json = db.Column(db.Text, default="{}")
+
+class DbEmailBlast(db.Model):
+    __tablename__ = "email_blasts"
+    id = db.Column(db.Integer, primary_key=True)
+    subject = db.Column(db.String(500), default="")
+    body = db.Column(db.Text, default="")
+    from_name = db.Column(db.String(200), default="")
+    sender_email = db.Column(db.String(200), default="")
+    list_name = db.Column(db.String(200), default="")
+    recipients_json = db.Column(db.Text, default="[]")
+    row_data_json = db.Column(db.Text, default="{}")
+    recipient_count = db.Column(db.Integer, default=0)
+    scheduled_for = db.Column(db.String(30), nullable=True)
+    status = db.Column(db.String(20), default="pending")
+    sent_at = db.Column(db.String(30), nullable=True)
+    send_result = db.Column(db.String(200), nullable=True)
+
+class DbSentEmail(db.Model):
+    __tablename__ = "sent_emails"
+    id = db.Column(db.Integer, primary_key=True)
+    brand = db.Column(db.String(40), default="")
+    to_email = db.Column(db.String(200), default="")
+    subject = db.Column(db.String(500), default="")
+    status = db.Column(db.String(20), default="")
+    sent_at = db.Column(db.String(30), default="")
+
+# ---------- DB helper functions ----------
+
+DEFAULT_USERS = {
+    "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic",    "sender_email": ""},
+    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan",  "sender_email": ""},
+    "sci":        {"password": "sci123",     "role": "client", "brand": "sci",        "sender_email": "Shawn@sciroof.com"},
+    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
+    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
+    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
+}
+
+def _init_db():
+    """Create all tables and seed default users if missing."""
+    db.create_all()
+    for uname, info in DEFAULT_USERS.items():
+        if not DbUser.query.filter_by(username=uname).first():
+            db.session.add(DbUser(
+                username=uname,
+                password=info["password"],
+                role=info["role"],
+                brand=info["brand"],
+                sender_email=info["sender_email"],
+            ))
+    db.session.commit()
+
+def _db_get_user(username):
+    """Return a user dict (matching old USERS format) or None."""
+    u = DbUser.query.filter_by(username=username).first()
+    if not u:
+        return None
+    return {"password": u.password, "role": u.role, "brand": u.brand, "sender_email": u.sender_email}
+
+def _db_get_all_users():
+    """Return dict of all users keyed by username."""
+    result = {}
+    for u in DbUser.query.all():
+        result[u.username] = {"password": u.password, "role": u.role, "brand": u.brand, "sender_email": u.sender_email}
+    return result
+
+def _db_add_user(username, password, role, brand, sender_email=""):
+    db.session.add(DbUser(username=username, password=password, role=role, brand=brand, sender_email=sender_email))
+    db.session.commit()
+
+def _db_delete_user(username):
+    DbUser.query.filter_by(username=username).delete()
+    db.session.commit()
+
+def _db_update_sender_email(username, sender_email):
+    u = DbUser.query.filter_by(username=username).first()
+    if u:
+        u.sender_email = sender_email
+        db.session.commit()
+
+def _db_get_property_notes(brand, property_id):
+    """Return list of note dicts for a property."""
+    notes = PropertyNote.query.filter_by(brand=brand, property_id=property_id).order_by(PropertyNote.id).all()
+    return [{"content": n.content, "timestamp": n.timestamp} for n in notes]
+
+def _db_add_property_note(brand, property_id, content, timestamp):
+    db.session.add(PropertyNote(brand=brand, property_id=property_id, content=content, timestamp=timestamp))
+    db.session.commit()
+
+def _db_get_property_edits(brand, property_id):
+    """Return dict of field_name -> field_value for a property."""
+    edits = PropertyEdit.query.filter_by(brand=brand, property_id=property_id).all()
+    return {e.field_name: e.field_value for e in edits}
+
+def _db_save_property_edit(brand, property_id, field_name, field_value):
+    existing = PropertyEdit.query.filter_by(brand=brand, property_id=property_id, field_name=field_name).first()
+    if existing:
+        existing.field_value = field_value
+    else:
+        db.session.add(PropertyEdit(brand=brand, property_id=property_id, field_name=field_name, field_value=field_value))
+    db.session.commit()
+
+def _db_get_property_contacts(brand, property_id):
+    """Return list of contact dicts for a property."""
+    contacts = PropertyContact.query.filter_by(brand=brand, property_id=property_id).order_by(PropertyContact.id).all()
+    return [{"name": c.name, "email": c.email, "phone": c.phone, "job_title": c.job_title} for c in contacts]
+
+def _db_save_property_contacts(brand, property_id, contacts_list):
+    """Replace all contacts for a property."""
+    PropertyContact.query.filter_by(brand=brand, property_id=property_id).delete()
+    for c in contacts_list:
+        db.session.add(PropertyContact(
+            brand=brand, property_id=property_id,
+            name=c.get("name", ""), email=c.get("email", ""),
+            phone=c.get("phone", ""), job_title=c.get("job_title", ""),
+        ))
+    db.session.commit()
+
+def _db_save_email_list(client_username, name, emails, row_data, columns, uploaded_at):
+    db.session.add(DbEmailList(
+        client_username=client_username, name=name, uploaded_at=uploaded_at,
+        columns_json=json.dumps(columns), emails_json=json.dumps(emails),
+        row_data_json=json.dumps(row_data),
+    ))
+    db.session.commit()
+
+def _db_get_client_email_lists(client_username):
+    """Return list of email list dicts for a client."""
+    lists = DbEmailList.query.filter_by(client_username=client_username).order_by(DbEmailList.id).all()
+    return [{
+        "name": el.name,
+        "emails": json.loads(el.emails_json),
+        "row_data": json.loads(el.row_data_json),
+        "columns": json.loads(el.columns_json),
+        "uploaded_at": el.uploaded_at,
+    } for el in lists]
+
+def _db_save_blast(subject, body, from_name, sender_email, list_name, recipients, row_data, recipient_count, scheduled_for, status, sent_at=None, send_result=None):
+    blast = DbEmailBlast(
+        subject=subject, body=body, from_name=from_name, sender_email=sender_email,
+        list_name=list_name, recipients_json=json.dumps(recipients),
+        row_data_json=json.dumps(row_data), recipient_count=recipient_count,
+        scheduled_for=scheduled_for, status=status, sent_at=sent_at, send_result=send_result,
+    )
+    db.session.add(blast)
+    db.session.commit()
+    return blast.id
+
+def _db_get_all_blasts():
+    """Return list of blast dicts ordered by newest first."""
+    blasts = DbEmailBlast.query.order_by(DbEmailBlast.id.desc()).all()
+    return [{
+        "id": b.id, "subject": b.subject, "body": b.body, "from_name": b.from_name,
+        "sender_email": b.sender_email, "list_name": b.list_name,
+        "recipients": json.loads(b.recipients_json), "row_data": json.loads(b.row_data_json),
+        "recipient_count": b.recipient_count, "scheduled_for": b.scheduled_for,
+        "status": b.status, "sent_at": b.sent_at, "send_result": b.send_result,
+    } for b in blasts]
+
+def _db_update_blast_status(blast_id, status, sent_at=None, send_result=None):
+    b = DbEmailBlast.query.get(blast_id)
+    if b:
+        b.status = status
+        if sent_at:
+            b.sent_at = sent_at
+        if send_result:
+            b.send_result = send_result
+        db.session.commit()
+
+def _db_get_pending_blasts():
+    """Return list of pending blast dicts whose scheduled_for has passed."""
+    return DbEmailBlast.query.filter_by(status="pending").filter(DbEmailBlast.scheduled_for.isnot(None)).all()
+
+def _db_log_sent_email(brand, to_email, subject, status, sent_at):
+    db.session.add(DbSentEmail(brand=brand, to_email=to_email, subject=subject, status=status, sent_at=sent_at))
+    db.session.commit()
+
+def _db_get_sent_emails(brand):
+    """Return list of sent email dicts for a brand."""
+    emails = DbSentEmail.query.filter_by(brand=brand).order_by(DbSentEmail.id.desc()).all()
+    return [{"to": e.to_email, "subject": e.subject, "status": e.status, "sent_at": e.sent_at} for e in emails]
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -550,27 +795,22 @@ def get_munsie_properties():
 # Default fake data for SCI / GENERIC
 fake_properties = [make_property(i) for i in range(1, 51)]
 # ==========================================================
-# USERS / AUTH
+# USERS / AUTH  (backed by PostgreSQL via DbUser model)
 # ==========================================================
-USERS = {
-    "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic",    "sender_email": ""},
-    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan",  "sender_email": ""},
-    "sci":        {"password": "sci123",     "role": "client", "brand": "sci",        "sender_email": "Shawn@sciroof.com"},
-    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
-    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
-    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
-}
+# USERS is now a live proxy; always call _db_get_all_users() for a snapshot,
+# or _db_get_user(username) for a single lookup.  The old dict is gone.
 
 def _get_sender_email_for_brand(brand):
     """Look up the sender email for a brand by finding the first user with that brand who has a sender_email set."""
-    for uname, info in USERS.items():
+    users = _db_get_all_users()
+    for uname, info in users.items():
         if info["brand"] == brand and info.get("sender_email"):
             return info["sender_email"]
     return SMTP_FROM_EMAIL
 
 def _get_sender_email_for_user(username):
     """Get sender email for a specific user, falling back to their brand default, then global default."""
-    info = USERS.get(username, {})
+    info = _db_get_user(username) or {}
     if info.get("sender_email"):
         return info["sender_email"]
     if info.get("brand"):
@@ -578,102 +818,98 @@ def _get_sender_email_for_user(username):
     return SMTP_FROM_EMAIL
 
 # ==========================================================
-# EMAIL MANAGER DATA (in-memory, keyed by client username)
+# EMAIL MANAGER DATA  (backed by PostgreSQL via DbEmailList)
 # ==========================================================
-# Structure per client:
-#   { "lists": [ {"name": str, "emails": [str], "uploaded_at": str} ],
-#     "schedules": [ {"list_name": str, "scheduled_for": str, "subject": str, "status": str} ] }
-EMAIL_MANAGER_DATA = {}
 def _get_client_email_data(username):
-    """Return email manager data for a client, initialising if needed."""
-    if username not in EMAIL_MANAGER_DATA:
-        EMAIL_MANAGER_DATA[username] = {"lists": [], "schedules": []}
-    return EMAIL_MANAGER_DATA[username]
-
-# ==========================================================
-# EMAIL BLAST SCHEDULER (in-memory)
-# ==========================================================
-EMAIL_BLAST_SCHEDULES = []  # list of blast dicts
-_blast_id_counter = 0
-
-def _next_blast_id():
-    global _blast_id_counter
-    _blast_id_counter += 1
-    return _blast_id_counter
+    """Return email manager data for a client from the database."""
+    lists = _db_get_client_email_lists(username)
+    return {"lists": lists, "schedules": []}
 
 def _get_all_email_lists():
-    """Collect every uploaded email list across all clients."""
+    """Collect every uploaded email list across all clients from the database."""
     all_lists = []
-    for uname, data in EMAIL_MANAGER_DATA.items():
-        sender = _get_sender_email_for_user(uname)
-        for lst in data.get("lists", []):
-            all_lists.append({
-                "client": uname,
-                "name": lst["name"],
-                "emails": lst["emails"],
-                "row_data": lst.get("row_data", {}),
-                "columns": lst.get("columns", []),
-                "uploaded_at": lst.get("uploaded_at", ""),
-                "sender_email": sender,
-            })
+    seen_clients = set()
+    for el in DbEmailList.query.order_by(DbEmailList.id).all():
+        seen_clients.add(el.client_username)
+        sender = _get_sender_email_for_user(el.client_username)
+        all_lists.append({
+            "client": el.client_username,
+            "name": el.name,
+            "emails": json.loads(el.emails_json),
+            "row_data": json.loads(el.row_data_json),
+            "columns": json.loads(el.columns_json),
+            "uploaded_at": el.uploaded_at,
+            "sender_email": sender,
+        })
     return all_lists
 
 TEST_EMAIL_ADDRESS = "Chandlerhoffman497@gmail.com"
 
 # ==========================================================
 # BACKGROUND SCHEDULER: checks pending blasts every 30 seconds
+# (now backed by PostgreSQL via DbEmailBlast model)
 # ==========================================================
 _scheduler_lock = threading.Lock()
 
 def _check_and_send_scheduled_blasts():
-    """Run in a background thread. Every 10s, scan EMAIL_BLAST_SCHEDULES
-    for pending blasts whose scheduled_for time has passed, then send them."""
+    """Run in a background thread. Every 10s, scan DB for pending blasts
+    whose scheduled_for time has passed, then send them."""
     while True:
         time.sleep(10)
         try:
-            now = datetime.now()
-            blasts_to_send = []
-            with _scheduler_lock:
-                for blast in EMAIL_BLAST_SCHEDULES:
-                    if blast["status"] != "pending" or not blast.get("scheduled_for"):
-                        continue
-                    sched_str = blast["scheduled_for"]
-                    sched_dt = None
-                    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-                        try:
-                            sched_dt = datetime.strptime(sched_str, fmt)
-                            break
-                        except (ValueError, TypeError):
+            with app.app_context():
+                now = datetime.now()
+                blasts_to_send = []
+                with _scheduler_lock:
+                    pending = DbEmailBlast.query.filter_by(status="pending").filter(DbEmailBlast.scheduled_for.isnot(None)).all()
+                    for blast in pending:
+                        sched_str = blast.scheduled_for
+                        sched_dt = None
+                        for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                            try:
+                                sched_dt = datetime.strptime(sched_str, fmt)
+                                break
+                            except (ValueError, TypeError):
+                                continue
+                        if sched_dt is None:
+                            logger.warning("Unparseable scheduled_for: %s", sched_str)
                             continue
-                    if sched_dt is None:
-                        logger.warning("Unparseable scheduled_for: %s", sched_str)
-                        continue
-                    if now >= sched_dt:
-                        logger.info("Scheduler: sending blast #%s (scheduled for %s, now=%s)",
-                                    blast["id"], sched_str, now.strftime("%Y-%m-%d %H:%M:%S"))
-                        blast["status"] = "sending"
-                        blasts_to_send.append(blast)
-            # Send outside the lock to avoid blocking
-            for blast in blasts_to_send:
-                ok_count, fail_count = 0, 0
-                blast_row_data = blast.get("row_data", {})
-                for em in blast.get("recipients", []):
-                    try:
-                        ok, err = _send_blast_email(em, blast["subject"], blast["body"],
-                                                    blast.get("from_name"), sender_email=blast.get("sender_email"),
-                                                    recipient_data=blast_row_data.get(em))
-                        if ok:
-                            ok_count += 1
-                        else:
+                        if now >= sched_dt:
+                            logger.info("Scheduler: sending blast #%s (scheduled for %s, now=%s)",
+                                        blast.id, sched_str, now.strftime("%Y-%m-%d %H:%M:%S"))
+                            blast.status = "sending"
+                            db.session.commit()
+                            blasts_to_send.append({
+                                "id": blast.id,
+                                "subject": blast.subject,
+                                "body": blast.body,
+                                "from_name": blast.from_name,
+                                "sender_email": blast.sender_email,
+                                "recipients": json.loads(blast.recipients_json),
+                                "row_data": json.loads(blast.row_data_json),
+                            })
+                # Send outside the lock to avoid blocking
+                for blast_data in blasts_to_send:
+                    ok_count, fail_count = 0, 0
+                    for em in blast_data.get("recipients", []):
+                        try:
+                            ok, err = _send_blast_email(em, blast_data["subject"], blast_data["body"],
+                                                        blast_data.get("from_name"), sender_email=blast_data.get("sender_email"),
+                                                        recipient_data=blast_data.get("row_data", {}).get(em))
+                            if ok:
+                                ok_count += 1
+                            else:
+                                fail_count += 1
+                        except Exception:
+                            logger.exception("Scheduler: failed to send to %s", em)
                             fail_count += 1
-                    except Exception:
-                        logger.exception("Scheduler: failed to send to %s", em)
-                        fail_count += 1
-                blast["status"] = "sent"
-                blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
-                logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
-                            blast["id"], ok_count, fail_count)
+                    _db_update_blast_status(
+                        blast_data["id"], "sent",
+                        sent_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        send_result=f"{ok_count} delivered, {fail_count} failed",
+                    )
+                    logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
+                                blast_data["id"], ok_count, fail_count)
         except Exception:
             logger.exception("Scheduler: unexpected error in scheduler loop, continuing...")
 
@@ -5054,7 +5290,7 @@ def login():
     if request.method == "POST":
         u = request.form.get("username", "").strip()
         p = request.form.get("password", "")
-        info = USERS.get(u)
+        info = _db_get_user(u)
         if info and info["password"] == p:
             session["username"] = u
             session["role"] = info["role"]
@@ -5337,20 +5573,18 @@ def edit_property(prop_id):
         return redirect(url_for("dashboard"))
 
     if request.method == "POST":
-        # Update primitive fields
-        prop['address'] = request.form.get('address', prop.get('address',''))
-        prop['city'] = request.form.get('city', prop.get('city',''))
-        prop['roof_material'] = request.form.get('roof_material', prop.get('roof_material',''))
-        prop['roof_type'] = request.form.get('roof_type', prop.get('roof_type',''))
-        prop['last_roof_date'] = request.form.get('last_roof_date', prop.get('last_roof_date',''))
-        prop['owner'] = request.form.get('owner', prop.get('owner',''))
-        prop['parcel_name'] = request.form.get('parcel_name', prop.get('parcel_name',''))
-        prop['llc_mailing_address'] = request.form.get('llc_mailing_address', prop.get('llc_mailing_address',''))
-        prop['property_use'] = request.form.get('property_use', prop.get('property_use',''))
-        prop['adj_bldg_sf'] = request.form.get('adj_bldg_sf', prop.get('adj_bldg_sf',''))
-        prop['year_built'] = request.form.get('year_built', prop.get('year_built',''))
+        # Update primitive fields and persist to DB
+        editable_fields = [
+            'address', 'city', 'roof_material', 'roof_type', 'last_roof_date',
+            'owner', 'parcel_name', 'llc_mailing_address', 'property_use',
+            'adj_bldg_sf', 'year_built',
+        ]
+        for field in editable_fields:
+            new_val = request.form.get(field, prop.get(field, ''))
+            prop[field] = new_val
+            _db_save_property_edit(brand, prop_id, field, new_val)
 
-        # Rebuild contacts from parallel lists
+        # Rebuild contacts from parallel lists and persist to DB
         names  = request.form.getlist('contact_name')
         emails = request.form.getlist('email')
         phones = request.form.getlist('phone')
@@ -5368,24 +5602,40 @@ def edit_property(prop_id):
                     "job_title": ""  # keep field for UI consistency
                 })
         prop['contact_info'] = new_contacts
+        _db_save_property_contacts(brand, prop_id, new_contacts)
 
-        # Notes (append only)
+        # Notes (append only) - persist to DB
         note_text = (request.form.get('notes', '') or '').strip()
         if note_text:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             prop.setdefault('notes', []).append({"content": note_text, "timestamp": timestamp})
+            _db_add_property_note(brand, prop_id, note_text, timestamp)
 
         return redirect(url_for('edit_property', prop_id=prop_id, saved='true'))
 
-    # For GET display (non-destructive)
+    # For GET display: overlay DB edits and notes on top of source data
     prop_view = deepcopy(prop)
     if brand == "munsie" and not prop_view.get("city"):
         prop_view["city"] = "Pinecrest, Miami"
 
+    # Apply persisted edits from DB
+    db_edits = _db_get_property_edits(brand, prop_id)
+    for field, value in db_edits.items():
+        prop_view[field] = value
+
+    # Apply persisted contacts from DB (if any were saved)
+    db_contacts = _db_get_property_contacts(brand, prop_id)
+    if db_contacts:
+        prop_view['contact_info'] = db_contacts
+
+    # Apply persisted notes from DB
+    db_notes = _db_get_property_notes(brand, prop_id)
+    if db_notes:
+        prop_view['notes'] = db_notes
+
     return render_template("edit_property.html", prop=prop_view, title="Edit Property")
 
 # -------- JobsDirect Email Dashboard --------
-JOBSDIRECT_SENT_LOG = []  # in-memory sent-email log
 
 @app.route("/jobsdirect")
 def jobsdirect_dashboard():
@@ -5399,7 +5649,7 @@ def jobsdirect_dashboard():
                            title="JobsDirect Dashboard",
                            from_email=from_email,
                            username=session.get("username"),
-                           sent_log=JOBSDIRECT_SENT_LOG,
+                           sent_log=_db_get_sent_emails("jobsdirect"),
                            body_class="")
 
 @app.route("/jobsdirect/send", methods=["POST"])
@@ -5447,15 +5697,11 @@ def jobsdirect_send():
                 smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
             smtp.send_message(msg)
 
-        JOBSDIRECT_SENT_LOG.append({
-            "to": to_email, "subject": subject, "status": "OK", "sent_at": sent_at,
-        })
+        _db_log_sent_email("jobsdirect", to_email, subject, "OK", sent_at)
         flash(f"Email sent to {to_email}.")
     except Exception as exc:
         logger.exception("JobsDirect email send failed")
-        JOBSDIRECT_SENT_LOG.append({
-            "to": to_email, "subject": subject, "status": "FAILED", "sent_at": sent_at,
-        })
+        _db_log_sent_email("jobsdirect", to_email, subject, "FAILED", sent_at)
         flash(f"Failed to send email: {exc}")
 
     return redirect(url_for("jobsdirect_dashboard"))
@@ -5470,7 +5716,8 @@ def adminchan_dashboard():
 
     # Build list of all non-adminchan clients with their email data
     clients = []
-    for uname, info in USERS.items():
+    all_users = _db_get_all_users()
+    for uname, info in all_users.items():
         if uname == session.get("username"):
             continue  # skip self
         clients.append({
@@ -5484,7 +5731,7 @@ def adminchan_dashboard():
                            title="Email Manager",
                            clients=clients,
                            email_lists=_get_all_email_lists(),
-                           blast_schedules=EMAIL_BLAST_SCHEDULES,
+                           blast_schedules=_db_get_all_blasts(),
                            test_email=TEST_EMAIL_ADDRESS,
                            body_class="")
 
@@ -5494,7 +5741,7 @@ def adminchan_upload_list(client_username):
         flash("Access denied.")
         return redirect(url_for("login"))
 
-    if client_username not in USERS:
+    if not _db_get_user(client_username):
         flash("Client not found.")
         return redirect(url_for("adminchan_dashboard"))
 
@@ -5535,14 +5782,14 @@ def adminchan_upload_list(client_username):
                     emails.append(email_val)
                     row_data[email_val] = {str(c): str(row[c]).strip() if pd.notna(row[c]) else "" for c in df.columns}
 
-        data = _get_client_email_data(client_username)
-        data["lists"].append({
-            "name": f.filename,
-            "emails": emails,
-            "row_data": row_data,
-            "columns": all_columns,
-            "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        })
+        _db_save_email_list(
+            client_username=client_username,
+            name=f.filename,
+            emails=emails,
+            row_data=row_data,
+            columns=all_columns,
+            uploaded_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        )
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
     except Exception as exc:
         logger.exception("Excel upload failed")
@@ -5621,22 +5868,13 @@ def adminchan_blast_schedule():
                 ok_count += 1
             else:
                 fail_count += 1
-        blast = {
-            "id": _next_blast_id(),
-            "subject": subject,
-            "body": body,
-            "from_name": from_name,
-            "sender_email": sender_email,
-            "list_name": list_name,
-            "recipients": selected_emails,
-            "row_data": list_row_data,
-            "recipient_count": len(selected_emails),
-            "scheduled_for": None,
-            "status": "sent",
-            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "send_result": f"{ok_count} delivered, {fail_count} failed",
-        }
-        EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        _db_save_blast(
+            subject=subject, body=body, from_name=from_name, sender_email=sender_email,
+            list_name=list_name, recipients=selected_emails, row_data=list_row_data,
+            recipient_count=len(selected_emails), scheduled_for=None, status="sent",
+            sent_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            send_result=f"{ok_count} delivered, {fail_count} failed",
+        )
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("adminchan_dashboard"))
 
@@ -5644,23 +5882,12 @@ def adminchan_blast_schedule():
         flash("Please select a date and time for the scheduled blast.")
         return redirect(url_for("adminchan_dashboard"))
 
-    blast = {
-        "id": _next_blast_id(),
-        "subject": subject,
-        "body": body,
-        "from_name": from_name,
-        "sender_email": sender_email,
-        "list_name": list_name,
-        "recipients": selected_emails,
-        "row_data": list_row_data,
-        "recipient_count": len(selected_emails),
-        "scheduled_for": scheduled_for,
-        "status": "pending",
-        "sent_at": None,
-        "send_result": None,
-    }
-    EMAIL_BLAST_SCHEDULES.insert(0, blast)
-    flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
+    blast_id = _db_save_blast(
+        subject=subject, body=body, from_name=from_name, sender_email=sender_email,
+        list_name=list_name, recipients=selected_emails, row_data=list_row_data,
+        recipient_count=len(selected_emails), scheduled_for=scheduled_for, status="pending",
+    )
+    flash(f"Blast #{blast_id} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("adminchan_dashboard"))
 
 
@@ -5673,28 +5900,31 @@ def adminchan_blast_action():
     blast_id = request.form.get("blast_id", type=int)
     action = request.form.get("action", "")
 
-    blast = next((b for b in EMAIL_BLAST_SCHEDULES if b["id"] == blast_id), None)
+    blast = DbEmailBlast.query.get(blast_id)
     if not blast:
         flash("Blast not found.")
         return redirect(url_for("adminchan_dashboard"))
 
     if action == "cancel":
-        blast["status"] = "cancelled"
+        _db_update_blast_status(blast_id, "cancelled")
         flash(f"Blast #{blast_id} cancelled.")
-    elif action == "send" and blast["status"] == "pending":
+    elif action == "send" and blast.status == "pending":
         ok_count, fail_count = 0, 0
-        blast_row_data = blast.get("row_data", {})
-        for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"),
-                                      sender_email=blast.get("sender_email"),
+        blast_row_data = json.loads(blast.row_data_json)
+        recipients = json.loads(blast.recipients_json)
+        for em in recipients:
+            ok, _ = _send_blast_email(em, blast.subject, blast.body, blast.from_name,
+                                      sender_email=blast.sender_email,
                                       recipient_data=blast_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
                 fail_count += 1
-        blast["status"] = "sent"
-        blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+        _db_update_blast_status(
+            blast_id, "sent",
+            sent_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            send_result=f"{ok_count} delivered, {fail_count} failed",
+        )
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("adminchan_dashboard"))
@@ -5708,12 +5938,13 @@ def admin_page():
         return redirect(url_for("dashboard") if session.get("username") else url_for("login"))
 
     # For display convenience in template
-    users_view = {u: type("obj", (), info) for u, info in USERS.items()}
+    all_users = _db_get_all_users()
+    users_view = {u: type("obj", (), info) for u, info in all_users.items()}
     return render_template("admin.html",
                            users=users_view,
                            title="Admin",
                            email_lists=_get_all_email_lists(),
-                           blast_schedules=EMAIL_BLAST_SCHEDULES,
+                           blast_schedules=_db_get_all_blasts(),
                            test_email=TEST_EMAIL_ADDRESS)
 
 @app.route("/admin/add", methods=["POST"])
@@ -5730,7 +5961,7 @@ def admin_add():
     if not username or not password:
         flash("Username and password are required.")
         return redirect(url_for("admin_page"))
-    if username in USERS:
+    if _db_get_user(username):
         flash("User already exists.")
         return redirect(url_for("admin_page"))
     if role not in ("admin","client"):
@@ -5741,7 +5972,7 @@ def admin_add():
         return redirect(url_for("admin_page"))
 
     sender_email = request.form.get("sender_email", "").strip()
-    USERS[username] = {"password": password, "role": role, "brand": brand, "sender_email": sender_email}
+    _db_add_user(username, password, role, brand, sender_email)
     flash(f"User '{username}' added.")
     return redirect(url_for("admin_page"))
 
@@ -5754,11 +5985,11 @@ def admin_update_sender_email():
     username = request.form.get("username", "").strip()
     sender_email = request.form.get("sender_email", "").strip()
 
-    if username not in USERS:
+    if not _db_get_user(username):
         flash("User not found.")
         return redirect(url_for("admin_page"))
 
-    USERS[username]["sender_email"] = sender_email
+    _db_update_sender_email(username, sender_email)
     flash(f"Sender email for '{username}' updated to '{sender_email or '(none)' }'.")
     return redirect(url_for("admin_page"))
 
@@ -5772,8 +6003,8 @@ def admin_delete():
     if username == "admin":
         flash("Cannot delete the primary admin.")
         return redirect(url_for("admin_page"))
-    if username in USERS:
-        USERS.pop(username)
+    if _db_get_user(username):
+        _db_delete_user(username)
         flash(f"Deleted '{username}'.")
     else:
         flash("User not found.")
@@ -5905,21 +6136,13 @@ def admin_blast_schedule():
             else:
                 fail_count += 1
 
-        blast = {
-            "id": _next_blast_id(),
-            "subject": subject,
-            "body": body,
-            "from_name": from_name,
-            "sender_email": sender_email,
-            "list_name": list_name,
-            "recipients": selected_emails,
-            "row_data": list_row_data,
-            "recipient_count": len(selected_emails),
-            "scheduled_for": None,
-            "status": "sent",
-            "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        _db_save_blast(
+            subject=subject, body=body, from_name=from_name, sender_email=sender_email,
+            list_name=list_name, recipients=selected_emails, row_data=list_row_data,
+            recipient_count=len(selected_emails), scheduled_for=None, status="sent",
+            sent_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            send_result=f"{ok_count} delivered, {fail_count} failed",
+        )
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("admin_page"))
 
@@ -5928,22 +6151,12 @@ def admin_blast_schedule():
         flash("Please select a date and time for the scheduled blast.")
         return redirect(url_for("admin_page"))
 
-    blast = {
-        "id": _next_blast_id(),
-        "subject": subject,
-        "body": body,
-        "from_name": from_name,
-        "sender_email": sender_email,
-        "list_name": list_name,
-        "recipients": selected_emails,
-        "row_data": list_row_data,
-        "recipient_count": len(selected_emails),
-        "scheduled_for": scheduled_for,
-        "status": "pending",
-        "sent_at": None,
-    }
-    EMAIL_BLAST_SCHEDULES.insert(0, blast)
-    flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
+    blast_id = _db_save_blast(
+        subject=subject, body=body, from_name=from_name, sender_email=sender_email,
+        list_name=list_name, recipients=selected_emails, row_data=list_row_data,
+        recipient_count=len(selected_emails), scheduled_for=scheduled_for, status="pending",
+    )
+    flash(f"Blast #{blast_id} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("admin_page"))
 
 
@@ -5956,27 +6169,31 @@ def admin_blast_action():
     blast_id = request.form.get("blast_id", type=int)
     action = request.form.get("action", "")
 
-    blast = next((b for b in EMAIL_BLAST_SCHEDULES if b["id"] == blast_id), None)
+    blast = DbEmailBlast.query.get(blast_id)
     if not blast:
         flash("Blast not found.")
         return redirect(url_for("admin_page"))
 
     if action == "cancel":
-        blast["status"] = "cancelled"
+        _db_update_blast_status(blast_id, "cancelled")
         flash(f"Blast #{blast_id} cancelled.")
-    elif action == "send" and blast["status"] == "pending":
+    elif action == "send" and blast.status == "pending":
         ok_count, fail_count = 0, 0
-        blast_row_data = blast.get("row_data", {})
-        for em in blast["recipients"]:
-            ok, _ = _send_blast_email(em, blast["subject"], blast["body"], blast.get("from_name"),
-                                      sender_email=blast.get("sender_email"),
+        blast_row_data = json.loads(blast.row_data_json)
+        recipients = json.loads(blast.recipients_json)
+        for em in recipients:
+            ok, _ = _send_blast_email(em, blast.subject, blast.body, blast.from_name,
+                                      sender_email=blast.sender_email,
                                       recipient_data=blast_row_data.get(em))
             if ok:
                 ok_count += 1
             else:
                 fail_count += 1
-        blast["status"] = "sent"
-        blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _db_update_blast_status(
+            blast_id, "sent",
+            sent_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            send_result=f"{ok_count} delivered, {fail_count} failed",
+        )
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("admin_page"))
@@ -6112,13 +6329,21 @@ def debug_chrome():
     return results
 
 # --------------------------
+# Database Initialization
+# --------------------------
+# Create tables and seed default users on startup (works for both gunicorn and local dev)
+with app.app_context():
+    _init_db()
+    logger.info("Database tables created / verified. Default users seeded.")
+
+# --------------------------
 # Run
 # --------------------------
 if __name__ == "__main__":
     # When running locally:
     #   pip install -r requirements.txt
     #   python app.py
-    # For Render: set start command to "gunicorn app:app"
+    # For Render / Railway: set start command to "gunicorn app:app"
     port = int(os.environ.get("PORT", "5001"))
     app.run(debug=False, use_reloader=False, port=port)
 
