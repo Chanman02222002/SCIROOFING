@@ -63,7 +63,7 @@ def fake_contact():
         "phone": fake.numerify("###-###-####"),
         "job_title": fake.job(),
     }
-
+    
 def make_property(i: int):
     """One fake property with 1-3 fake contacts."""
     return {
