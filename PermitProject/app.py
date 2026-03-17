@@ -6174,10 +6174,12 @@ def jobsdirect_dashboard():
         return redirect(url_for("dashboard"))
 
     from_email = _get_sender_email_for_user(session.get("username", ""))
-    # Gather all scheduled/pending/sent blasts for the calendar view
+    # Gather scheduled/pending/sent blasts filtered to this account's sender email
     scheduled_blasts = []
     for blast in EMAIL_BLAST_SCHEDULES:
         if blast.get("scheduled_for"):
+            if blast.get("sender_email", "").lower() != from_email.lower():
+                continue
             scheduled_blasts.append({
                 "id": blast.get("id"),
                 "subject": blast.get("subject", "(no subject)"),
@@ -6298,6 +6300,8 @@ def email_dashboard():
     scheduled_blasts = []
     for blast in EMAIL_BLAST_SCHEDULES:
         if blast.get("scheduled_for"):
+            if blast.get("sender_email", "").lower() != from_email.lower():
+                continue
             scheduled_blasts.append({
                 "id": blast.get("id"),
                 "subject": blast.get("subject", "(no subject)"),
