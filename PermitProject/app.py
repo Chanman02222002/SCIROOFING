@@ -1784,16 +1784,56 @@ app.jinja_loader = DictLoader({
           updateCount();
         }
 
+        // --- Autoscroll while dragging near edges of email chips container ---
+        var autoScrollRAF = null;
+        var autoScrollSpeed = 0;
+        var chipsContainer = document.getElementById('emailChipsContainer');
+
+        function startAutoScroll() {
+          if (autoScrollRAF) return;
+          function step() {
+            if (!isDragging || autoScrollSpeed === 0) {
+              autoScrollRAF = null;
+              return;
+            }
+            chipsContainer.scrollTop += autoScrollSpeed;
+            autoScrollRAF = requestAnimationFrame(step);
+          }
+          autoScrollRAF = requestAnimationFrame(step);
+        }
+
+        function stopAutoScroll() {
+          autoScrollSpeed = 0;
+          if (autoScrollRAF) { cancelAnimationFrame(autoScrollRAF); autoScrollRAF = null; }
+        }
+
+        document.addEventListener('mousemove', function(e) {
+          if (!isDragging) return;
+          var rect = chipsContainer.getBoundingClientRect();
+          var edgeZone = 40;
+          if (e.clientY > rect.bottom - edgeZone && e.clientY <= rect.bottom) {
+            autoScrollSpeed = 6 + 10 * (1 - (rect.bottom - e.clientY) / edgeZone);
+            startAutoScroll();
+          } else if (e.clientY < rect.top + edgeZone && e.clientY >= rect.top) {
+            autoScrollSpeed = -(6 + 10 * (1 - (e.clientY - rect.top) / edgeZone));
+            startAutoScroll();
+          } else {
+            stopAutoScroll();
+          }
+        });
+
         // End drag on mouseup anywhere
         document.addEventListener('mouseup', function() {
           isDragging = false;
           dragMode = null;
           dragProcessed = new Set();
+          stopAutoScroll();
         });
         document.addEventListener('touchend', function() {
           isDragging = false;
           dragMode = null;
           dragProcessed = new Set();
+          stopAutoScroll();
         });
 
         function toggleAllEmails(selectAll) {
@@ -3594,15 +3634,55 @@ app.jinja_loader = DictLoader({
           updateCount();
         }
 
+        // --- Autoscroll while dragging near edges of email chips container ---
+        var autoScrollRAF = null;
+        var autoScrollSpeed = 0;
+        var chipsContainer = document.getElementById('emailChipsContainer');
+
+        function startAutoScroll() {
+          if (autoScrollRAF) return;
+          function step() {
+            if (!isDragging || autoScrollSpeed === 0) {
+              autoScrollRAF = null;
+              return;
+            }
+            chipsContainer.scrollTop += autoScrollSpeed;
+            autoScrollRAF = requestAnimationFrame(step);
+          }
+          autoScrollRAF = requestAnimationFrame(step);
+        }
+
+        function stopAutoScroll() {
+          autoScrollSpeed = 0;
+          if (autoScrollRAF) { cancelAnimationFrame(autoScrollRAF); autoScrollRAF = null; }
+        }
+
+        document.addEventListener('mousemove', function(e) {
+          if (!isDragging) return;
+          var rect = chipsContainer.getBoundingClientRect();
+          var edgeZone = 40;
+          if (e.clientY > rect.bottom - edgeZone && e.clientY <= rect.bottom) {
+            autoScrollSpeed = 6 + 10 * (1 - (rect.bottom - e.clientY) / edgeZone);
+            startAutoScroll();
+          } else if (e.clientY < rect.top + edgeZone && e.clientY >= rect.top) {
+            autoScrollSpeed = -(6 + 10 * (1 - (e.clientY - rect.top) / edgeZone));
+            startAutoScroll();
+          } else {
+            stopAutoScroll();
+          }
+        });
+
         document.addEventListener('mouseup', function() {
           isDragging = false;
           dragMode = null;
           dragProcessed = new Set();
+          stopAutoScroll();
         });
         document.addEventListener('touchend', function() {
           isDragging = false;
           dragMode = null;
           dragProcessed = new Set();
+          stopAutoScroll();
         });
 
         function toggleAllEmails(selectAll) {
