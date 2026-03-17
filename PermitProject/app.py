@@ -4054,6 +4054,67 @@ app.jinja_loader = DictLoader({
         </form>
       </div>
 
+      <!-- Scheduled Email Calendar -->
+      <div class="jd-card">
+        <h5>Scheduled Email Calendar</h5>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+          <button class="btn btn-sm btn-outline-primary" onclick="calNav(-1)" style="border-radius:8px;">&laquo; Prev</button>
+          <h5 id="calMonthLabel" style="margin:0; font-weight:700; color:#4f46e5;"></h5>
+          <button class="btn btn-sm btn-outline-primary" onclick="calNav(1)" style="border-radius:8px;">Next &raquo;</button>
+        </div>
+        <div id="calGrid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px;"></div>
+        <div style="margin-top:.75rem; display:flex; gap:1rem; flex-wrap:wrap;">
+          <span style="font-size:.78rem; color:#64748b;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:4px;"></span>Pending</span>
+          <span style="font-size:.78rem; color:#64748b;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3b82f6;margin-right:4px;"></span>Sending</span>
+          <span style="font-size:.78rem; color:#64748b;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#15803d;margin-right:4px;"></span>Sent</span>
+          <span style="font-size:.78rem; color:#64748b;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#dc2626;margin-right:4px;"></span>Cancelled</span>
+        </div>
+      </div>
+
+      <!-- Email Preview Modal -->
+      <div class="modal fade" id="emailPreviewModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+          <div class="modal-content" style="border-radius:16px; border:none; box-shadow:0 25px 60px rgba(0,0,0,.18);">
+            <div class="modal-header" style="background:linear-gradient(135deg,#7c3aed,#4f46e5); color:#fff; border-radius:16px 16px 0 0; border:none;">
+              <h5 class="modal-title" id="modalSubject" style="font-weight:700;"></h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" style="padding:1.5rem 2rem;">
+              <div class="row mb-3">
+                <div class="col-sm-6">
+                  <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em;">Status</div>
+                  <span id="modalStatus" style="font-weight:700;"></span>
+                </div>
+                <div class="col-sm-6">
+                  <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em;">Scheduled For</div>
+                  <span id="modalScheduledFor" style="font-weight:600; color:#0f172a;"></span>
+                </div>
+              </div>
+              <div class="row mb-3">
+                <div class="col-sm-6">
+                  <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em;">From</div>
+                  <span id="modalFrom" style="font-weight:600; color:#0f172a;"></span>
+                </div>
+                <div class="col-sm-6">
+                  <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em;">List</div>
+                  <span id="modalList" style="font-weight:600; color:#0f172a;"></span>
+                </div>
+              </div>
+              <div id="modalResultRow" class="mb-3" style="display:none;">
+                <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em;">Result</div>
+                <span id="modalResult" style="font-weight:600; color:#0f172a;"></span>
+              </div>
+              <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em; margin-bottom:.5rem;">
+                Recipients (<span id="modalRecipientCount"></span>)
+              </div>
+              <div id="modalRecipients" style="max-height:150px; overflow-y:auto; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:.75rem 1rem; margin-bottom:1rem;"></div>
+              <div style="font-size:.78rem; color:#64748b; text-transform:uppercase; font-weight:600; letter-spacing:.05em; margin-bottom:.5rem;">Email Preview</div>
+              <div id="modalBody" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:1rem 1.25rem; max-height:300px; overflow-y:auto; white-space:pre-wrap; font-size:.9rem; line-height:1.6; color:#1e293b;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Sent Log -->
       <div class="jd-card">
         <h5>Sent Emails</h5>
@@ -4078,6 +4139,142 @@ app.jinja_loader = DictLoader({
           <div class="jd-empty">No emails sent yet. Use the form above to compose and send.</div>
         {% endif %}
       </div>
+
+      <script>
+      (function(){
+        var blasts = {{ scheduled_blasts | tojson }};
+        var calYear, calMonth;
+
+        function init(){
+          var d = new Date();
+          calYear = d.getFullYear();
+          calMonth = d.getMonth();
+          renderCal();
+        }
+
+        window.calNav = function(dir){
+          calMonth += dir;
+          if(calMonth < 0){ calMonth = 11; calYear--; }
+          if(calMonth > 11){ calMonth = 0; calYear++; }
+          renderCal();
+        };
+
+        function parseSchedDate(s){
+          if(!s) return null;
+          var d = new Date(s.replace(' ','T'));
+          return isNaN(d.getTime()) ? null : d;
+        }
+
+        function statusColor(st){
+          if(st==='pending') return '#f59e0b';
+          if(st==='sending') return '#3b82f6';
+          if(st==='sent') return '#15803d';
+          if(st==='cancelled') return '#dc2626';
+          return '#64748b';
+        }
+
+        function formatDT(s){
+          var d = parseSchedDate(s);
+          if(!d) return s || '';
+          return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+        }
+
+        function renderCal(){
+          var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+          document.getElementById('calMonthLabel').textContent = months[calMonth] + ' ' + calYear;
+          var grid = document.getElementById('calGrid');
+          grid.innerHTML = '';
+
+          var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+          for(var i=0;i<7;i++){
+            var hdr = document.createElement('div');
+            hdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:#64748b;padding:6px 0;text-transform:uppercase;';
+            hdr.textContent = days[i];
+            grid.appendChild(hdr);
+          }
+
+          var first = new Date(calYear, calMonth, 1);
+          var startDay = first.getDay();
+          var daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+          var today = new Date();
+
+          for(var b=0;b<startDay;b++){
+            var blank = document.createElement('div');
+            blank.style.cssText = 'min-height:80px;';
+            grid.appendChild(blank);
+          }
+
+          for(var day=1;day<=daysInMonth;day++){
+            var cell = document.createElement('div');
+            var isToday = (day===today.getDate() && calMonth===today.getMonth() && calYear===today.getFullYear());
+            cell.style.cssText = 'min-height:80px;border:1px solid #e2e8f0;border-radius:8px;padding:4px 6px;font-size:.82rem;position:relative;' + (isToday ? 'background:#eef2ff;border-color:#a5b4fc;' : 'background:#fff;');
+            var dayLabel = document.createElement('div');
+            dayLabel.style.cssText = 'font-weight:700;color:' + (isToday ? '#4f46e5' : '#0f172a') + ';font-size:.8rem;margin-bottom:2px;';
+            dayLabel.textContent = day;
+            cell.appendChild(dayLabel);
+
+            var dayBlasts = blasts.filter(function(bl){
+              var d = parseSchedDate(bl.scheduled_for);
+              return d && d.getDate()===day && d.getMonth()===calMonth && d.getFullYear()===calYear;
+            });
+
+            dayBlasts.forEach(function(bl){
+              var chip = document.createElement('div');
+              chip.style.cssText = 'background:' + statusColor(bl.status) + ';color:#fff;border-radius:6px;padding:2px 6px;font-size:.7rem;font-weight:600;margin-bottom:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+              chip.title = bl.subject + ' (' + bl.recipient_count + ' recipients)';
+              chip.textContent = bl.subject.length > 18 ? bl.subject.substring(0,18) + '...' : bl.subject;
+              chip.onclick = function(){ showPreview(bl); };
+              cell.appendChild(chip);
+            });
+
+            grid.appendChild(cell);
+          }
+        }
+
+        function showPreview(bl){
+          document.getElementById('modalSubject').textContent = bl.subject;
+          var st = bl.status.charAt(0).toUpperCase() + bl.status.slice(1);
+          var stEl = document.getElementById('modalStatus');
+          stEl.textContent = st;
+          stEl.style.color = statusColor(bl.status);
+          document.getElementById('modalScheduledFor').textContent = formatDT(bl.scheduled_for);
+          var fromText = bl.from_name ? (bl.from_name + ' <' + bl.sender_email + '>') : (bl.sender_email || '');
+          document.getElementById('modalFrom').textContent = fromText;
+          document.getElementById('modalList').textContent = bl.list_name || 'N/A';
+          document.getElementById('modalRecipientCount').textContent = bl.recipient_count;
+
+          var recipEl = document.getElementById('modalRecipients');
+          if(bl.recipients && bl.recipients.length > 0){
+            recipEl.innerHTML = bl.recipients.map(function(e){
+              return '<div style="padding:2px 0;font-size:.85rem;color:#0f172a;border-bottom:1px solid #f1f5f9;">' + e + '</div>';
+            }).join('');
+          } else {
+            recipEl.innerHTML = '<div style="color:#94a3b8;font-size:.85rem;">No recipients listed</div>';
+          }
+
+          var bodyEl = document.getElementById('modalBody');
+          if(bl.body && bl.body.trim().charAt(0)==='<'){
+            bodyEl.innerHTML = bl.body;
+            bodyEl.style.whiteSpace = 'normal';
+          } else {
+            bodyEl.textContent = bl.body || '(empty)';
+            bodyEl.style.whiteSpace = 'pre-wrap';
+          }
+
+          var resultRow = document.getElementById('modalResultRow');
+          if(bl.send_result){
+            resultRow.style.display = 'block';
+            document.getElementById('modalResult').textContent = bl.send_result;
+          } else {
+            resultRow.style.display = 'none';
+          }
+
+          new bootstrap.Modal(document.getElementById('emailPreviewModal')).show();
+        }
+
+        init();
+      })();
+      </script>
     {% endblock %}
     """,
 })
@@ -5606,11 +5803,30 @@ def jobsdirect_dashboard():
         return redirect(url_for("dashboard"))
 
     from_email = _get_sender_email_for_user(session.get("username", ""))
+    # Gather all scheduled/pending/sent blasts for the calendar view
+    scheduled_blasts = []
+    for blast in EMAIL_BLAST_SCHEDULES:
+        if blast.get("scheduled_for"):
+            scheduled_blasts.append({
+                "id": blast.get("id"),
+                "subject": blast.get("subject", "(no subject)"),
+                "body": blast.get("body", ""),
+                "scheduled_for": blast.get("scheduled_for", ""),
+                "status": blast.get("status", "pending"),
+                "recipient_count": blast.get("recipient_count", 0),
+                "recipients": blast.get("recipients", []),
+                "from_name": blast.get("from_name", ""),
+                "sender_email": blast.get("sender_email", ""),
+                "list_name": blast.get("list_name", ""),
+                "sent_at": blast.get("sent_at", ""),
+                "send_result": blast.get("send_result", ""),
+            })
     return render_template("jobsdirect_dashboard.html",
                            title="JobsDirect Dashboard",
                            from_email=from_email,
                            username=session.get("username"),
                            sent_log=JOBSDIRECT_SENT_LOG,
+                           scheduled_blasts=scheduled_blasts,
                            body_class="")
 
 @app.route("/jobsdirect/send", methods=["POST"])
