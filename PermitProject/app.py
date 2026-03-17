@@ -33,6 +33,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+import psycopg2
+import psycopg2.extras
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
@@ -52,6 +54,208 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "apikey" if SENDGRID_API_KEY else "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", SENDGRID_API_KEY)
 SMTP_FROM_EMAIL = "Shawn@sciroof.com"
+
+# ==========================================================
+# POSTGRESQL DATABASE (persists email lists & blasts across deploys)
+# ==========================================================
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+def _get_db_conn():
+    """Return a new psycopg2 connection using DATABASE_URL."""
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(DATABASE_URL)
+
+def _init_db():
+    """Create tables if they don't exist."""
+    conn = _get_db_conn()
+    if conn is None:
+        logger.warning("DATABASE_URL not set – email lists & blasts will NOT persist across deploys!")
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS email_lists (
+                        id SERIAL PRIMARY KEY,
+                        client_username TEXT NOT NULL,
+                        list_name TEXT NOT NULL,
+                        emails JSONB NOT NULL DEFAULT '[]',
+                        row_data JSONB NOT NULL DEFAULT '{}',
+                        columns JSONB NOT NULL DEFAULT '[]',
+                        uploaded_at TEXT NOT NULL
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS email_blasts (
+                        id SERIAL PRIMARY KEY,
+                        subject TEXT NOT NULL,
+                        body TEXT NOT NULL,
+                        from_name TEXT NOT NULL DEFAULT '',
+                        sender_email TEXT NOT NULL DEFAULT '',
+                        list_name TEXT NOT NULL DEFAULT '',
+                        recipients JSONB NOT NULL DEFAULT '[]',
+                        row_data JSONB NOT NULL DEFAULT '{}',
+                        recipient_count INTEGER NOT NULL DEFAULT 0,
+                        scheduled_for TEXT,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        sent_at TEXT,
+                        send_result TEXT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+        logger.info("Database tables initialised successfully.")
+    except Exception:
+        logger.exception("Failed to initialise database tables")
+    finally:
+        conn.close()
+
+# --- DB helper: email lists ---
+
+def _db_save_email_list(client_username, list_data):
+    """Insert an email list into PostgreSQL. Returns the new row id or None."""
+    conn = _get_db_conn()
+    if conn is None:
+        return None
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO email_lists (client_username, list_name, emails, row_data, columns, uploaded_at)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                """, (
+                    client_username,
+                    list_data["name"],
+                    json.dumps(list_data.get("emails", [])),
+                    json.dumps(list_data.get("row_data", {})),
+                    json.dumps(list_data.get("columns", [])),
+                    list_data.get("uploaded_at", ""),
+                ))
+                return cur.fetchone()[0]
+    except Exception:
+        logger.exception("Failed to save email list to DB")
+        return None
+    finally:
+        conn.close()
+
+def _db_load_all_email_lists():
+    """Load all email lists from PostgreSQL into EMAIL_MANAGER_DATA dict."""
+    conn = _get_db_conn()
+    if conn is None:
+        return {}
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM email_lists ORDER BY id")
+            rows = cur.fetchall()
+        result = {}
+        for row in rows:
+            uname = row["client_username"]
+            if uname not in result:
+                result[uname] = {"lists": [], "schedules": []}
+            result[uname]["lists"].append({
+                "name": row["list_name"],
+                "emails": row["emails"] if isinstance(row["emails"], list) else json.loads(row["emails"]),
+                "row_data": row["row_data"] if isinstance(row["row_data"], dict) else json.loads(row["row_data"]),
+                "columns": row["columns"] if isinstance(row["columns"], list) else json.loads(row["columns"]),
+                "uploaded_at": row["uploaded_at"],
+            })
+        return result
+    except Exception:
+        logger.exception("Failed to load email lists from DB")
+        return {}
+    finally:
+        conn.close()
+
+# --- DB helper: email blasts ---
+
+def _db_save_blast(blast):
+    """Insert a blast record into PostgreSQL. Returns the new row id or None."""
+    conn = _get_db_conn()
+    if conn is None:
+        return None
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO email_blasts
+                        (subject, body, from_name, sender_email, list_name,
+                         recipients, row_data, recipient_count, scheduled_for,
+                         status, sent_at, send_result)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+                """, (
+                    blast.get("subject", ""),
+                    blast.get("body", ""),
+                    blast.get("from_name", ""),
+                    blast.get("sender_email", ""),
+                    blast.get("list_name", ""),
+                    json.dumps(blast.get("recipients", [])),
+                    json.dumps(blast.get("row_data", {})),
+                    blast.get("recipient_count", 0),
+                    blast.get("scheduled_for"),
+                    blast.get("status", "pending"),
+                    blast.get("sent_at"),
+                    blast.get("send_result"),
+                ))
+                return cur.fetchone()[0]
+    except Exception:
+        logger.exception("Failed to save blast to DB")
+        return None
+    finally:
+        conn.close()
+
+def _db_update_blast(blast_id, **fields):
+    """Update specific fields on a blast row."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        sets = []
+        vals = []
+        for k, v in fields.items():
+            sets.append(f"{k} = %s")
+            vals.append(v)
+        vals.append(blast_id)
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE email_blasts SET {', '.join(sets)} WHERE id = %s", vals)
+    except Exception:
+        logger.exception("Failed to update blast #%s in DB", blast_id)
+    finally:
+        conn.close()
+
+def _db_load_all_blasts():
+    """Load all blasts from PostgreSQL, newest first."""
+    conn = _get_db_conn()
+    if conn is None:
+        return []
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT * FROM email_blasts ORDER BY id DESC")
+            rows = cur.fetchall()
+        blasts = []
+        for row in rows:
+            blasts.append({
+                "id": row["id"],
+                "subject": row["subject"],
+                "body": row["body"],
+                "from_name": row["from_name"],
+                "sender_email": row["sender_email"],
+                "list_name": row["list_name"],
+                "recipients": row["recipients"] if isinstance(row["recipients"], list) else json.loads(row["recipients"]),
+                "row_data": row["row_data"] if isinstance(row["row_data"], dict) else json.loads(row["row_data"]),
+                "recipient_count": row["recipient_count"],
+                "scheduled_for": row["scheduled_for"],
+                "status": row["status"],
+                "sent_at": row["sent_at"],
+                "send_result": row["send_result"],
+            })
+        return blasts
+    except Exception:
+        logger.exception("Failed to load blasts from DB")
+        return []
+    finally:
+        conn.close()
+
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
 # ==========================================================
@@ -578,12 +782,14 @@ def _get_sender_email_for_user(username):
     return SMTP_FROM_EMAIL
 
 # ==========================================================
-# EMAIL MANAGER DATA (in-memory, keyed by client username)
+# EMAIL MANAGER DATA (backed by PostgreSQL when DATABASE_URL is set)
 # ==========================================================
-# Structure per client:
-#   { "lists": [ {"name": str, "emails": [str], "uploaded_at": str} ],
-#     "schedules": [ {"list_name": str, "scheduled_for": str, "subject": str, "status": str} ] }
-EMAIL_MANAGER_DATA = {}
+_init_db()  # create tables if needed
+
+# Load persisted data from DB into memory on startup
+EMAIL_MANAGER_DATA = _db_load_all_email_lists()
+logger.info("Loaded %d client email datasets from DB.", len(EMAIL_MANAGER_DATA))
+
 def _get_client_email_data(username):
     """Return email manager data for a client, initialising if needed."""
     if username not in EMAIL_MANAGER_DATA:
@@ -591,10 +797,13 @@ def _get_client_email_data(username):
     return EMAIL_MANAGER_DATA[username]
 
 # ==========================================================
-# EMAIL BLAST SCHEDULER (in-memory)
+# EMAIL BLAST SCHEDULER (backed by PostgreSQL when DATABASE_URL is set)
 # ==========================================================
-EMAIL_BLAST_SCHEDULES = []  # list of blast dicts
-_blast_id_counter = 0
+EMAIL_BLAST_SCHEDULES = _db_load_all_blasts()
+logger.info("Loaded %d blasts from DB.", len(EMAIL_BLAST_SCHEDULES))
+
+# Derive next blast ID from DB (so IDs keep incrementing across deploys)
+_blast_id_counter = max((b["id"] for b in EMAIL_BLAST_SCHEDULES), default=0)
 
 def _next_blast_id():
     global _blast_id_counter
@@ -652,6 +861,7 @@ def _check_and_send_scheduled_blasts():
                         logger.info("Scheduler: sending blast #%s (scheduled for %s, now=%s)",
                                     blast["id"], sched_str, now.strftime("%Y-%m-%d %H:%M:%S"))
                         blast["status"] = "sending"
+                        _db_update_blast(blast["id"], status="sending")
                         blasts_to_send.append(blast)
             # Send outside the lock to avoid blocking
             for blast in blasts_to_send:
@@ -672,6 +882,7 @@ def _check_and_send_scheduled_blasts():
                 blast["status"] = "sent"
                 blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+                _db_update_blast(blast["id"], status="sent", sent_at=blast["sent_at"], send_result=blast["send_result"])
                 logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
                             blast["id"], ok_count, fail_count)
         except Exception:
@@ -5536,13 +5747,15 @@ def adminchan_upload_list(client_username):
                     row_data[email_val] = {str(c): str(row[c]).strip() if pd.notna(row[c]) else "" for c in df.columns}
 
         data = _get_client_email_data(client_username)
-        data["lists"].append({
+        list_entry = {
             "name": f.filename,
             "emails": emails,
             "row_data": row_data,
             "columns": all_columns,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        })
+        }
+        data["lists"].append(list_entry)
+        _db_save_email_list(client_username, list_entry)
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
     except Exception as exc:
         logger.exception("Excel upload failed")
@@ -5637,6 +5850,9 @@ def adminchan_blast_schedule():
             "send_result": f"{ok_count} delivered, {fail_count} failed",
         }
         EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        db_id = _db_save_blast(blast)
+        if db_id:
+            blast["id"] = db_id
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("adminchan_dashboard"))
 
@@ -5660,6 +5876,9 @@ def adminchan_blast_schedule():
         "send_result": None,
     }
     EMAIL_BLAST_SCHEDULES.insert(0, blast)
+    db_id = _db_save_blast(blast)
+    if db_id:
+        blast["id"] = db_id
     flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("adminchan_dashboard"))
 
@@ -5680,6 +5899,7 @@ def adminchan_blast_action():
 
     if action == "cancel":
         blast["status"] = "cancelled"
+        _db_update_blast(blast_id, status="cancelled")
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
@@ -5695,6 +5915,7 @@ def adminchan_blast_action():
         blast["status"] = "sent"
         blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+        _db_update_blast(blast_id, status="sent", sent_at=blast["sent_at"], send_result=blast["send_result"])
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("adminchan_dashboard"))
@@ -5920,6 +6141,9 @@ def admin_blast_schedule():
             "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         EMAIL_BLAST_SCHEDULES.insert(0, blast)
+        db_id = _db_save_blast(blast)
+        if db_id:
+            blast["id"] = db_id
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("admin_page"))
 
@@ -5943,6 +6167,9 @@ def admin_blast_schedule():
         "sent_at": None,
     }
     EMAIL_BLAST_SCHEDULES.insert(0, blast)
+    db_id = _db_save_blast(blast)
+    if db_id:
+        blast["id"] = db_id
     flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("admin_page"))
 
@@ -5963,6 +6190,7 @@ def admin_blast_action():
 
     if action == "cancel":
         blast["status"] = "cancelled"
+        _db_update_blast(blast_id, status="cancelled")
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
@@ -5977,6 +6205,7 @@ def admin_blast_action():
                 fail_count += 1
         blast["status"] = "sent"
         blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _db_update_blast(blast_id, status="sent", sent_at=blast["sent_at"])
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("admin_page"))
