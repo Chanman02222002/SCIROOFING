@@ -34,8 +34,13 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+import db as _db
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-me-in-production")
+
+# ── Postgres initialisation (tables created automatically) ───────────────────
+_db.init_db()
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -455,6 +460,11 @@ def get_sci_project_locations():
 
 
 def _load_custom_spots():
+    # Try Postgres first
+    db_spots = _db.load_custom_spots()
+    if db_spots is not None:
+        return db_spots
+    # Fallback to JSON file (local dev without DB)
     if not os.path.exists(SCI_CUSTOM_SPOTS_FILE):
         return []
     try:
@@ -466,6 +476,7 @@ def _load_custom_spots():
 
 
 def _save_custom_spots(spots):
+    # JSON file fallback
     os.makedirs(os.path.dirname(SCI_CUSTOM_SPOTS_FILE), exist_ok=True)
     with open(SCI_CUSTOM_SPOTS_FILE, "w") as f:
         json.dump(spots, f, indent=2)
@@ -549,17 +560,17 @@ def get_munsie_properties():
 
 # Default fake data for SCI / GENERIC
 fake_properties = [make_property(i) for i in range(1, 51)]
+
+# Restore persisted notes onto fake properties from Postgres
+_saved_notes = _db.load_property_notes("generic")
+for _pid, _notes in _saved_notes.items():
+    _prop = next((p for p in fake_properties if p["id"] == _pid), None)
+    if _prop:
+        _prop.setdefault("notes", []).extend(_notes)
 # ==========================================================
 # USERS / AUTH
 # ==========================================================
-USERS = {
-    "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic",    "sender_email": ""},
-    "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan",  "sender_email": ""},
-    "sci":        {"password": "sci123",     "role": "client", "brand": "sci",        "sender_email": "Shawn@sciroof.com"},
-    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
-    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
-    "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
-}
+USERS = _db.load_users()  # loads from Postgres (seeds defaults if empty; falls back to defaults if no DB)
 
 def _get_sender_email_for_brand(brand):
     """Look up the sender email for a brand by finding the first user with that brand who has a sender_email set."""
@@ -583,7 +594,7 @@ def _get_sender_email_for_user(username):
 # Structure per client:
 #   { "lists": [ {"name": str, "emails": [str], "uploaded_at": str} ],
 #     "schedules": [ {"list_name": str, "scheduled_for": str, "subject": str, "status": str} ] }
-EMAIL_MANAGER_DATA = {}
+EMAIL_MANAGER_DATA = _db.load_email_manager_data()  # load persisted email lists from Postgres
 def _get_client_email_data(username):
     """Return email manager data for a client, initialising if needed."""
     if username not in EMAIL_MANAGER_DATA:
@@ -593,8 +604,8 @@ def _get_client_email_data(username):
 # ==========================================================
 # EMAIL BLAST SCHEDULER (in-memory)
 # ==========================================================
-EMAIL_BLAST_SCHEDULES = []  # list of blast dicts
-_blast_id_counter = 0
+EMAIL_BLAST_SCHEDULES = _db.load_email_blasts()  # load persisted blasts from Postgres
+_blast_id_counter = max((b["id"] for b in EMAIL_BLAST_SCHEDULES), default=0)
 
 def _next_blast_id():
     global _blast_id_counter
@@ -672,6 +683,7 @@ def _check_and_send_scheduled_blasts():
                 blast["status"] = "sent"
                 blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+                _db.update_blast(blast["id"], {"status": "sent", "sent_at": blast["sent_at"], "send_result": blast["send_result"]})
                 logger.info("Scheduler: blast #%s complete - %s delivered, %s failed",
                             blast["id"], ok_count, fail_count)
         except Exception:
@@ -5312,6 +5324,7 @@ def add_sci_spot():
     spots = _load_custom_spots()
     spots.append(spot)
     _save_custom_spots(spots)
+    _db.save_custom_spot(spot)  # persist to Postgres
 
     global _sci_projects_cache
     _sci_projects_cache = None
@@ -5374,6 +5387,7 @@ def edit_property(prop_id):
         if note_text:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             prop.setdefault('notes', []).append({"content": note_text, "timestamp": timestamp})
+            _db.save_property_note(prop_id, session.get("brand", "generic"), note_text, timestamp)
 
         return redirect(url_for('edit_property', prop_id=prop_id, saved='true'))
 
@@ -5536,13 +5550,15 @@ def adminchan_upload_list(client_username):
                     row_data[email_val] = {str(c): str(row[c]).strip() if pd.notna(row[c]) else "" for c in df.columns}
 
         data = _get_client_email_data(client_username)
-        data["lists"].append({
+        list_entry = {
             "name": f.filename,
             "emails": emails,
             "row_data": row_data,
             "columns": all_columns,
             "uploaded_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        })
+        }
+        data["lists"].append(list_entry)
+        _db.save_email_list(client_username, list_entry)  # persist to Postgres
         flash(f"Uploaded '{f.filename}' with {len(emails)} emails for {client_username}.")
     except Exception as exc:
         logger.exception("Excel upload failed")
@@ -5636,6 +5652,9 @@ def adminchan_blast_schedule():
             "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "send_result": f"{ok_count} delivered, {fail_count} failed",
         }
+        db_id = _db.save_blast(blast)
+        if db_id:
+            blast["id"] = db_id
         EMAIL_BLAST_SCHEDULES.insert(0, blast)
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("adminchan_dashboard"))
@@ -5659,6 +5678,9 @@ def adminchan_blast_schedule():
         "sent_at": None,
         "send_result": None,
     }
+    db_id = _db.save_blast(blast)
+    if db_id:
+        blast["id"] = db_id
     EMAIL_BLAST_SCHEDULES.insert(0, blast)
     flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("adminchan_dashboard"))
@@ -5680,6 +5702,7 @@ def adminchan_blast_action():
 
     if action == "cancel":
         blast["status"] = "cancelled"
+        _db.update_blast(blast_id, {"status": "cancelled"})
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
@@ -5695,6 +5718,7 @@ def adminchan_blast_action():
         blast["status"] = "sent"
         blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         blast["send_result"] = f"{ok_count} delivered, {fail_count} failed"
+        _db.update_blast(blast_id, {"status": "sent", "sent_at": blast["sent_at"], "send_result": blast["send_result"]})
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("adminchan_dashboard"))
@@ -5741,7 +5765,9 @@ def admin_add():
         return redirect(url_for("admin_page"))
 
     sender_email = request.form.get("sender_email", "").strip()
-    USERS[username] = {"password": password, "role": role, "brand": brand, "sender_email": sender_email}
+    user_info = {"password": password, "role": role, "brand": brand, "sender_email": sender_email}
+    USERS[username] = user_info
+    _db.save_user(username, user_info)  # persist to Postgres
     flash(f"User '{username}' added.")
     return redirect(url_for("admin_page"))
 
@@ -5759,6 +5785,7 @@ def admin_update_sender_email():
         return redirect(url_for("admin_page"))
 
     USERS[username]["sender_email"] = sender_email
+    _db.save_user(username, USERS[username])  # persist to Postgres
     flash(f"Sender email for '{username}' updated to '{sender_email or '(none)' }'.")
     return redirect(url_for("admin_page"))
 
@@ -5774,6 +5801,7 @@ def admin_delete():
         return redirect(url_for("admin_page"))
     if username in USERS:
         USERS.pop(username)
+        _db.delete_user(username)  # remove from Postgres
         flash(f"Deleted '{username}'.")
     else:
         flash("User not found.")
@@ -5919,6 +5947,9 @@ def admin_blast_schedule():
             "status": "sent",
             "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+        db_id = _db.save_blast(blast)
+        if db_id:
+            blast["id"] = db_id
         EMAIL_BLAST_SCHEDULES.insert(0, blast)
         flash(f"Blast sent from {sender_email}! {ok_count} delivered, {fail_count} failed.")
         return redirect(url_for("admin_page"))
@@ -5942,6 +5973,9 @@ def admin_blast_schedule():
         "status": "pending",
         "sent_at": None,
     }
+    db_id = _db.save_blast(blast)
+    if db_id:
+        blast["id"] = db_id
     EMAIL_BLAST_SCHEDULES.insert(0, blast)
     flash(f"Blast #{blast['id']} scheduled for {scheduled_for} to {len(selected_emails)} recipients.")
     return redirect(url_for("admin_page"))
@@ -5963,6 +5997,7 @@ def admin_blast_action():
 
     if action == "cancel":
         blast["status"] = "cancelled"
+        _db.update_blast(blast_id, {"status": "cancelled"})
         flash(f"Blast #{blast_id} cancelled.")
     elif action == "send" and blast["status"] == "pending":
         ok_count, fail_count = 0, 0
@@ -5977,6 +6012,7 @@ def admin_blast_action():
                 fail_count += 1
         blast["status"] = "sent"
         blast["sent_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _db.update_blast(blast_id, {"status": "sent", "sent_at": blast["sent_at"]})
         flash(f"Blast #{blast_id} sent! {ok_count} delivered, {fail_count} failed.")
 
     return redirect(url_for("admin_page"))
