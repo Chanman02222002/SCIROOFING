@@ -123,6 +123,16 @@ def _init_db():
                 # Unique index on lower-cased email (ignore dupes)
                 cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_email ON email_suppressions (LOWER(email));")
                 cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_email ON email_blocked (LOWER(email));")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS removed_contacts (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        removed_from_user TEXT NOT NULL,
+                        removed_from_list TEXT NOT NULL,
+                        matched_list TEXT NOT NULL DEFAULT 'suppression',
+                        removed_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
         logger.info("Database tables initialised successfully.")
     except Exception:
         logger.exception("Failed to initialise database tables")
@@ -370,6 +380,70 @@ def _is_email_suppressed_or_blocked(email):
     """Check if an email is in the suppression or blocked list."""
     em = email.strip().lower()
     return em in SUPPRESSION_SET or em in BLOCKED_SET
+
+def _db_add_removed_contact(email, removed_from_user, removed_from_list, matched_list):
+    """Record that a contact was removed from a user list because it matched suppression/blocked."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO removed_contacts (email, removed_from_user, removed_from_list, matched_list) VALUES (%s, %s, %s, %s)",
+                    (email.strip().lower(), removed_from_user, removed_from_list, matched_list),
+                )
+    except Exception:
+        logger.exception("Failed to record removed contact")
+    finally:
+        conn.close()
+
+def _db_load_removed_contacts(limit=200):
+    """Load recent removed contacts from DB."""
+    conn = _get_db_conn()
+    if conn is None:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT email, removed_from_user, removed_from_list, matched_list, removed_at FROM removed_contacts ORDER BY removed_at DESC LIMIT %s",
+                (limit,),
+            )
+            return [{"email": r[0], "user": r[1], "list_name": r[2], "matched": r[3], "removed_at": r[4]} for r in cur.fetchall()]
+    except Exception:
+        logger.exception("Failed to load removed contacts")
+        return []
+    finally:
+        conn.close()
+
+def _db_clear_removed_contacts():
+    """Clear all removed contact records."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM removed_contacts")
+    except Exception:
+        logger.exception("Failed to clear removed contacts")
+    finally:
+        conn.close()
+
+def _db_count_removed_contacts():
+    """Count total removed contacts."""
+    conn = _get_db_conn()
+    if conn is None:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM removed_contacts")
+            return cur.fetchone()[0]
+    except Exception:
+        logger.exception("Failed to count removed contacts")
+        return 0
+    finally:
+        conn.close()
 
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
@@ -2148,6 +2222,63 @@ app.jinja_loader = DictLoader({
                   </div>
                 </div>
               </form>
+            </div>
+          </div>
+
+          <!-- Scan & Remove + Actually Removed Contacts -->
+          <div class="blast-card mt-4">
+            <div class="blast-card-header" style="background:linear-gradient(135deg,#dc3545,#c82333);color:#fff;">
+              Actually Removed Contacts ({{ removed_count }})
+            </div>
+            <div class="blast-card-body">
+              <p class="text-muted" style="font-size:.85rem;">Contacts below were actually pulled off user lists because they appeared on the suppression or blocked list. Use "Scan All Lists" to check all user lists against current suppression/blocked lists and remove matches.</p>
+              <div class="d-flex gap-2 mb-3">
+                <form method="post" action="{{ url_for('admin_scan_remove') }}">
+                  <button type="submit" class="btn btn-danger btn-sm">Scan All Lists &amp; Remove Matches</button>
+                </form>
+                {% if removed_count > 0 %}
+                <form method="post" action="{{ url_for('admin_clear_removed') }}">
+                  <button type="submit" class="btn btn-outline-secondary btn-sm">Clear History</button>
+                </form>
+                {% endif %}
+              </div>
+              {% if removed_contacts %}
+              <div class="table-responsive" style="max-height:400px; overflow-y:auto;">
+                <table class="table table-sm table-hover align-middle mb-0">
+                  <thead style="position:sticky;top:0;background:#fff;z-index:1;">
+                    <tr>
+                      <th>Email</th>
+                      <th>Removed From User</th>
+                      <th>Removed From List</th>
+                      <th>Matched</th>
+                      <th>Removed At</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for rc in removed_contacts %}
+                    <tr>
+                      <td style="font-size:.85rem;">{{ rc.email }}</td>
+                      <td style="font-size:.85rem;">{{ rc.user }}</td>
+                      <td style="font-size:.85rem;">{{ rc.list_name }}</td>
+                      <td>
+                        {% if rc.matched == 'suppression' %}
+                        <span class="badge bg-warning text-dark" style="font-size:.7rem;">Suppression</span>
+                        {% else %}
+                        <span class="badge bg-danger" style="font-size:.7rem;">Blocked</span>
+                        {% endif %}
+                      </td>
+                      <td style="font-size:.8rem;">{{ rc.removed_at.strftime('%m/%d/%Y %I:%M %p') if rc.removed_at else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              {% if removed_count > 200 %}
+              <p class="text-muted mt-2 mb-0" style="font-size:.8rem;">Showing 200 of {{ removed_count }} total removed contacts.</p>
+              {% endif %}
+              {% else %}
+              <p class="text-muted mb-0">No contacts have been removed from user lists yet. Upload a suppression/blocked file or click "Scan All Lists" to find and remove matches.</p>
+              {% endif %}
             </div>
           </div>
 
@@ -6964,6 +7095,8 @@ def admin_page():
     # Suppression/blocked lists for display (limit to 200 most recent)
     supp_sorted = sorted(SUPPRESSION_SET)[:200]
     blk_sorted = sorted(BLOCKED_SET)[:200]
+    removed_contacts = _db_load_removed_contacts(200)
+    removed_count = _db_count_removed_contacts()
     return render_template("admin.html",
                            users=users_view,
                            title="Admin",
@@ -6973,7 +7106,9 @@ def admin_page():
                            suppression_count=len(SUPPRESSION_SET),
                            blocked_count=len(BLOCKED_SET),
                            suppression_emails=supp_sorted,
-                           blocked_emails=blk_sorted)
+                           blocked_emails=blk_sorted,
+                           removed_contacts=removed_contacts,
+                           removed_count=removed_count)
 
 @app.route("/admin/add", methods=["POST"])
 def admin_add():
@@ -7094,8 +7229,24 @@ def admin_upload_suppression():
     added = _db_add_emails_to_table(table, emails, source=f.filename)
     target_set.update(em.strip().lower() for em in emails)
 
+    # Auto-scan user lists and remove any emails matching the newly uploaded list
+    uploaded_set = {em.strip().lower() for em in emails}
+    auto_removed = 0
+    for uname, data in EMAIL_MANAGER_DATA.items():
+        for list_idx, lst in enumerate(data.get("lists", [])):
+            list_name = lst.get("name", f"List {list_idx}")
+            to_pull = [e for e in lst.get("emails", []) if e.strip().lower() in uploaded_set]
+            for email in to_pull:
+                lst["emails"].remove(email)
+                lst.get("row_data", {}).pop(email, None)
+                _db_add_removed_contact(email, uname, list_name, list_type)
+                auto_removed += 1
+
     label = "suppression" if list_type == "suppression" else "blocked"
-    flash(f"{'Replaced' if replace else 'Updated'} {label} list: {added} new emails added ({len(emails)} found in file).")
+    msg = f"{'Replaced' if replace else 'Updated'} {label} list: {added} new emails added ({len(emails)} found in file)."
+    if auto_removed:
+        msg += f" Auto-removed {auto_removed} matching email(s) from user lists."
+    flash(msg)
     return redirect(url_for("admin_page"))
 
 
@@ -7191,6 +7342,8 @@ def admin_search_emails():
     users_view = {u: type("obj", (), info) for u, info in USERS.items()}
     supp_sorted = sorted(SUPPRESSION_SET)[:200]
     blk_sorted = sorted(BLOCKED_SET)[:200]
+    removed_contacts = _db_load_removed_contacts(200)
+    removed_count = _db_count_removed_contacts()
     return render_template("admin.html",
                            users=users_view,
                            title="Admin",
@@ -7201,6 +7354,8 @@ def admin_search_emails():
                            blocked_count=len(BLOCKED_SET),
                            suppression_emails=supp_sorted,
                            blocked_emails=blk_sorted,
+                           removed_contacts=removed_contacts,
+                           removed_count=removed_count,
                            search_results=results,
                            search_terms=search_terms,
                            active_tab="suppress")
@@ -7243,6 +7398,52 @@ def admin_remove_emails():
         flash(f"Removed {removed_count} email(s) from user lists." + (" Also added to blocked list." if also_block else ""))
     else:
         flash("No emails were removed.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/suppression/scan-remove", methods=["POST"])
+def admin_scan_remove():
+    """Scan all user lists and remove any emails that appear on suppression or blocked lists."""
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    removed_count = 0
+    for uname, data in EMAIL_MANAGER_DATA.items():
+        for list_idx, lst in enumerate(data.get("lists", [])):
+            list_name = lst.get("name", f"List {list_idx}")
+            emails_to_remove = []
+            for email in lst.get("emails", []):
+                em_lower = email.strip().lower()
+                matched_list = None
+                if em_lower in SUPPRESSION_SET:
+                    matched_list = "suppression"
+                elif em_lower in BLOCKED_SET:
+                    matched_list = "blocked"
+                if matched_list:
+                    emails_to_remove.append((email, matched_list))
+
+            for email, matched_list in emails_to_remove:
+                lst["emails"].remove(email)
+                lst.get("row_data", {}).pop(email, None)
+                _db_add_removed_contact(email, uname, list_name, matched_list)
+                removed_count += 1
+
+    if removed_count:
+        flash(f"Scan complete: removed {removed_count} email(s) from user lists that matched suppression/blocked lists.")
+    else:
+        flash("Scan complete: no matching emails found in any user lists.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/suppression/clear-removed", methods=["POST"])
+def admin_clear_removed():
+    """Clear the removed contacts history."""
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+    _db_clear_removed_contacts()
+    flash("Removed contacts history cleared.")
     return redirect(url_for("admin_page"))
 
 
