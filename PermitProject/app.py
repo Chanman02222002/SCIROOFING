@@ -971,10 +971,10 @@ USERS = {
     "admin":      {"password": "admin123",   "role": "admin",  "brand": "generic",    "sender_email": ""},
     "adminchan":  {"password": "icecream2",  "role": "admin",  "brand": "adminchan",  "sender_email": ""},
     "sci":        {"password": "sci123",     "role": "client", "brand": "sci",        "sender_email": "Shawn@sciroof.com"},
-    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
-    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
+    "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": "info@roofing123.com"},
+    "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": "steve@meroof.com"},
     "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
-    "FloridaMedicalSpace": {"password": "FMS123", "role": "client", "brand": "floridamedicalspace", "sender_email": ""},
+    "FloridaMedicalSpace": {"password": "FMS123", "role": "client", "brand": "floridamedicalspace", "sender_email": "info@floridamedicalspace.com"},
 }
 
 def _get_sender_email_for_brand(brand):
@@ -4794,7 +4794,11 @@ app.jinja_loader = DictLoader({
     "fms_landing.html": """
     {% extends "base.html" %}
     {% block content %}
-      <h2 class="mb-2">Florida Medical Space Dashboard</h2>
+      <div class="d-flex align-items-center mb-3">
+        <img src="{{ url_for('static', filename='FMS-Logo-Small-6-27-14.jpg') }}"
+            alt="Florida Medical Space Logo" style="max-height:60px" class="me-2">
+        <h2 class="mb-0">Florida Medical Space Dashboard</h2>
+      </div>
       <p class="text-muted mb-4">Choose a function to continue.</p>
       <div class="row g-3">
         <div class="col-md-6 mx-auto">
