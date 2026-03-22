@@ -104,6 +104,25 @@ def _init_db():
                         created_at TIMESTAMP DEFAULT NOW()
                     );
                 """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS email_suppressions (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'manual',
+                        added_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS email_blocked (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        source TEXT NOT NULL DEFAULT 'manual',
+                        added_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                # Unique index on lower-cased email (ignore dupes)
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_suppression_email ON email_suppressions (LOWER(email));")
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_blocked_email ON email_blocked (LOWER(email));")
         logger.info("Database tables initialised successfully.")
     except Exception:
         logger.exception("Failed to initialise database tables")
@@ -255,6 +274,102 @@ def _db_load_all_blasts():
         return []
     finally:
         conn.close()
+
+# --- DB helpers: suppression & blocked lists ---
+
+def _db_load_suppression_set():
+    """Load all suppressed emails as a lowercase set."""
+    conn = _get_db_conn()
+    if conn is None:
+        return set()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT email FROM email_suppressions")
+            return {row[0].lower() for row in cur.fetchall()}
+    except Exception:
+        logger.exception("Failed to load suppressions from DB")
+        return set()
+    finally:
+        conn.close()
+
+def _db_load_blocked_set():
+    """Load all blocked emails as a lowercase set."""
+    conn = _get_db_conn()
+    if conn is None:
+        return set()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT email FROM email_blocked")
+            return {row[0].lower() for row in cur.fetchall()}
+    except Exception:
+        logger.exception("Failed to load blocked emails from DB")
+        return set()
+    finally:
+        conn.close()
+
+def _db_add_emails_to_table(table, emails, source="manual"):
+    """Insert emails into the given table (email_suppressions or email_blocked), skipping dupes."""
+    conn = _get_db_conn()
+    if conn is None:
+        return 0
+    added = 0
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                for em in emails:
+                    em_clean = em.strip().lower()
+                    if not em_clean:
+                        continue
+                    try:
+                        cur.execute(
+                            f"INSERT INTO {table} (email, source) VALUES (%s, %s) ON CONFLICT (LOWER(email)) DO NOTHING",
+                            (em_clean, source),
+                        )
+                        if cur.rowcount > 0:
+                            added += 1
+                    except Exception:
+                        pass
+        return added
+    except Exception:
+        logger.exception("Failed to add emails to %s", table)
+        return 0
+    finally:
+        conn.close()
+
+def _db_remove_email_from_table(table, email):
+    """Remove a single email from suppression or blocked table."""
+    conn = _get_db_conn()
+    if conn is None:
+        return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {table} WHERE LOWER(email) = LOWER(%s)", (email,))
+                return cur.rowcount > 0
+    except Exception:
+        logger.exception("Failed to remove email from %s", table)
+        return False
+    finally:
+        conn.close()
+
+def _db_clear_table(table):
+    """Remove all rows from suppression or blocked table."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {table}")
+    except Exception:
+        logger.exception("Failed to clear %s", table)
+    finally:
+        conn.close()
+
+def _is_email_suppressed_or_blocked(email):
+    """Check if an email is in the suppression or blocked list."""
+    em = email.strip().lower()
+    return em in SUPPRESSION_SET or em in BLOCKED_SET
 
 # ==========================================================
 # HELPERS: Fake data for non-Munsie brands
@@ -789,6 +904,11 @@ _init_db()  # create tables if needed
 # Load persisted data from DB into memory on startup
 EMAIL_MANAGER_DATA = _db_load_all_email_lists()
 logger.info("Loaded %d client email datasets from DB.", len(EMAIL_MANAGER_DATA))
+
+# Suppression & Blocked in-memory sets (loaded from DB)
+SUPPRESSION_SET = _db_load_suppression_set()
+BLOCKED_SET = _db_load_blocked_set()
+logger.info("Loaded %d suppressed, %d blocked emails from DB.", len(SUPPRESSION_SET), len(BLOCKED_SET))
 
 def _get_client_email_data(username):
     """Return email manager data for a client, initialising if needed."""
@@ -1666,6 +1786,10 @@ app.jinja_loader = DictLoader({
           <button class="nav-link" id="blast-tab" data-bs-toggle="tab" data-bs-target="#blast-pane"
             type="button" role="tab" aria-selected="false">Email Blast Scheduler</button>
         </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="suppress-tab" data-bs-toggle="tab" data-bs-target="#suppress-pane"
+            type="button" role="tab" aria-selected="false">Suppression &amp; Blocked</button>
+        </li>
       </ul>
 
       <div class="tab-content" id="adminTabContent">
@@ -1893,9 +2017,197 @@ app.jinja_loader = DictLoader({
           {% endif %}
 
         </div><!-- /blast-pane -->
+
+        <!-- ====== TAB 3: Suppression & Blocked ====== -->
+        <div class="tab-pane fade" id="suppress-pane" role="tabpanel">
+
+          <div class="blast-header">
+            <h4>Suppression &amp; Blocked Lists</h4>
+            <p>Upload suppression/blocked files, or manually search &amp; remove emails across all user lists</p>
+          </div>
+
+          <div class="row g-4">
+            <!-- Upload Suppression File -->
+            <div class="col-lg-6">
+              <div class="blast-card">
+                <div class="blast-card-header">Upload Suppression List</div>
+                <div class="blast-card-body">
+                  <p class="text-muted" style="font-size:.85rem;">Upload a CSV or Excel file containing emails to suppress. Emails in this list will be excluded from all future blasts.</p>
+                  <form method="post" action="{{ url_for('admin_upload_suppression') }}" enctype="multipart/form-data">
+                    <input type="hidden" name="list_type" value="suppression">
+                    <div class="mb-2">
+                      <input type="file" name="file" class="form-control" accept=".csv,.xlsx,.xls" required>
+                    </div>
+                    <div class="d-flex gap-2">
+                      <button type="submit" class="btn btn-primary btn-sm">Upload &amp; Add</button>
+                      <button type="submit" name="replace" value="1" class="btn btn-outline-warning btn-sm">Replace Entire List</button>
+                    </div>
+                  </form>
+                  <div class="mt-3">
+                    <span class="badge bg-secondary" style="font-size:.82rem;">{{ suppression_count }} emails currently suppressed</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Upload Blocked File -->
+            <div class="col-lg-6">
+              <div class="blast-card">
+                <div class="blast-card-header">Upload Blocked List</div>
+                <div class="blast-card-body">
+                  <p class="text-muted" style="font-size:.85rem;">Upload a CSV or Excel file containing emails to block (e.g. bounced addresses). These will also be excluded from blasts.</p>
+                  <form method="post" action="{{ url_for('admin_upload_suppression') }}" enctype="multipart/form-data">
+                    <input type="hidden" name="list_type" value="blocked">
+                    <div class="mb-2">
+                      <input type="file" name="file" class="form-control" accept=".csv,.xlsx,.xls" required>
+                    </div>
+                    <div class="d-flex gap-2">
+                      <button type="submit" class="btn btn-primary btn-sm">Upload &amp; Add</button>
+                      <button type="submit" name="replace" value="1" class="btn btn-outline-warning btn-sm">Replace Entire List</button>
+                    </div>
+                  </form>
+                  <div class="mt-3">
+                    <span class="badge bg-secondary" style="font-size:.82rem;">{{ blocked_count }} emails currently blocked</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Manual Search & Remove -->
+          <div class="blast-card mt-4">
+            <div class="blast-card-header">Search &amp; Remove Emails Across All Users</div>
+            <div class="blast-card-body">
+              <p class="text-muted" style="font-size:.85rem;">Enter one or more names or email addresses (one per line) to search across every uploaded email list. Matching entries can be removed individually or all at once.</p>
+              <form method="post" action="{{ url_for('admin_search_emails') }}" id="searchForm">
+                <div class="row g-2 align-items-end">
+                  <div class="col-md-8">
+                    <label class="form-label fw-bold">Names or Emails to Search</label>
+                    <textarea name="search_terms" class="form-control" rows="3" placeholder="john@example.com&#10;Jane Smith&#10;bounced@old.com" required>{{ search_terms or '' }}</textarea>
+                  </div>
+                  <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary w-100">Search All Lists</button>
+                  </div>
+                </div>
+              </form>
+
+              {% if search_results is defined and search_results %}
+              <div class="mt-3">
+                <h6>Search Results ({{ search_results|length }} match{{ 'es' if search_results|length != 1 else '' }})</h6>
+                <form method="post" action="{{ url_for('admin_remove_emails') }}">
+                  <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-2">
+                      <thead><tr>
+                        <th><input type="checkbox" id="checkAll" onchange="document.querySelectorAll('.rm-check').forEach(c=>c.checked=this.checked)"></th>
+                        <th>Email</th><th>Name</th><th>List</th><th>User</th>
+                      </tr></thead>
+                      <tbody>
+                        {% for r in search_results %}
+                        <tr>
+                          <td><input type="checkbox" class="rm-check" name="remove" value="{{ r.user }}||{{ r.list_idx }}||{{ r.email }}"></td>
+                          <td>{{ r.email }}</td>
+                          <td>{{ r.name or '-' }}</td>
+                          <td>{{ r.list_name }}</td>
+                          <td>{{ r.user }}</td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-danger btn-sm">Remove Selected from Lists</button>
+                    <button type="submit" name="remove_and_block" value="1" class="btn btn-outline-danger btn-sm">Remove &amp; Add to Blocked</button>
+                  </div>
+                </form>
+              </div>
+              {% elif search_results is defined and not search_results %}
+              <div class="alert alert-info mt-3 mb-0">No matching emails found across any user lists.</div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Quick-add single email to suppression/blocked -->
+          <div class="blast-card mt-4">
+            <div class="blast-card-header">Quick Add Single Email</div>
+            <div class="blast-card-body">
+              <form method="post" action="{{ url_for('admin_quick_add_suppression') }}">
+                <div class="row g-2 align-items-end">
+                  <div class="col-md-5">
+                    <label class="form-label fw-bold">Email Address</label>
+                    <input type="email" name="email" class="form-control" placeholder="bounce@example.com" required>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label fw-bold">Add To</label>
+                    <select name="list_type" class="form-select">
+                      <option value="suppression">Suppression List</option>
+                      <option value="blocked">Blocked List</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <button type="submit" class="btn btn-warning w-100">Add to List</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Current Suppression / Blocked entries (last 50 of each) -->
+          <div class="row g-4 mt-2">
+            <div class="col-lg-6">
+              <div class="blast-card">
+                <div class="blast-card-header">Recent Suppression Entries ({{ suppression_count }})</div>
+                <div class="blast-card-body" style="max-height:300px; overflow-y:auto;">
+                  {% if suppression_emails %}
+                  <form method="post" action="{{ url_for('admin_remove_from_list') }}">
+                    <input type="hidden" name="list_type" value="suppression">
+                    {% for em in suppression_emails %}
+                    <div class="d-flex justify-content-between align-items-center py-1" style="border-bottom:1px solid #f1f5f9;">
+                      <span style="font-size:.85rem;">{{ em }}</span>
+                      <button type="submit" name="email" value="{{ em }}" class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:.7rem;">Remove</button>
+                    </div>
+                    {% endfor %}
+                  </form>
+                  {% else %}
+                  <p class="text-muted mb-0">No suppression entries yet.</p>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-6">
+              <div class="blast-card">
+                <div class="blast-card-header">Recent Blocked Entries ({{ blocked_count }})</div>
+                <div class="blast-card-body" style="max-height:300px; overflow-y:auto;">
+                  {% if blocked_emails %}
+                  <form method="post" action="{{ url_for('admin_remove_from_list') }}">
+                    <input type="hidden" name="list_type" value="blocked">
+                    {% for em in blocked_emails %}
+                    <div class="d-flex justify-content-between align-items-center py-1" style="border-bottom:1px solid #f1f5f9;">
+                      <span style="font-size:.85rem;">{{ em }}</span>
+                      <button type="submit" name="email" value="{{ em }}" class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size:.7rem;">Remove</button>
+                    </div>
+                    {% endfor %}
+                  </form>
+                  {% else %}
+                  <p class="text-muted mb-0">No blocked entries yet.</p>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /suppress-pane -->
+
       </div><!-- /tab-content -->
 
       <script>
+        // --- Activate correct tab if specified ---
+        {% if active_tab == 'suppress' %}
+        document.addEventListener('DOMContentLoaded', function() {
+          var tab = document.getElementById('suppress-tab');
+          if (tab) { var bsTab = new bootstrap.Tab(tab); bsTab.show(); }
+        });
+        {% endif %}
+
         // --- Email Blast Scheduler JS ---
         var currentEmails = [];
         var selectedEmails = new Set();
@@ -6649,12 +6961,19 @@ def admin_page():
 
     # For display convenience in template
     users_view = {u: type("obj", (), info) for u, info in USERS.items()}
+    # Suppression/blocked lists for display (limit to 200 most recent)
+    supp_sorted = sorted(SUPPRESSION_SET)[:200]
+    blk_sorted = sorted(BLOCKED_SET)[:200]
     return render_template("admin.html",
                            users=users_view,
                            title="Admin",
                            email_lists=_get_all_email_lists(),
                            blast_schedules=EMAIL_BLAST_SCHEDULES,
-                           test_email=TEST_EMAIL_ADDRESS)
+                           test_email=TEST_EMAIL_ADDRESS,
+                           suppression_count=len(SUPPRESSION_SET),
+                           blocked_count=len(BLOCKED_SET),
+                           suppression_emails=supp_sorted,
+                           blocked_emails=blk_sorted)
 
 @app.route("/admin/add", methods=["POST"])
 def admin_add():
@@ -6720,6 +7039,213 @@ def admin_delete():
     return redirect(url_for("admin_page"))
 
 
+# -------- Suppression & Blocked routes --------
+
+def _parse_emails_from_file(file_storage):
+    """Read a CSV/Excel file and extract all email addresses found in any column."""
+    fname = file_storage.filename.lower()
+    try:
+        if fname.endswith(".csv"):
+            df = pd.read_csv(file_storage)
+        else:
+            df = pd.read_excel(file_storage)
+    except Exception as exc:
+        logger.exception("Failed to parse uploaded file %s", file_storage.filename)
+        return [], str(exc)
+
+    emails = []
+    email_re = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+    for col in df.columns:
+        for val in df[col].dropna().astype(str):
+            found = email_re.findall(val)
+            emails.extend(found)
+    return list(set(emails)), None
+
+
+@app.route("/admin/suppression/upload", methods=["POST"])
+def admin_upload_suppression():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    list_type = request.form.get("list_type", "suppression")
+    table = "email_suppressions" if list_type == "suppression" else "email_blocked"
+    target_set = SUPPRESSION_SET if list_type == "suppression" else BLOCKED_SET
+    replace = request.form.get("replace") == "1"
+
+    f = request.files.get("file")
+    if not f or not f.filename:
+        flash("No file selected.")
+        return redirect(url_for("admin_page"))
+
+    emails, err = _parse_emails_from_file(f)
+    if err:
+        flash(f"Failed to parse file: {err}")
+        return redirect(url_for("admin_page"))
+
+    if not emails:
+        flash("No email addresses found in uploaded file.")
+        return redirect(url_for("admin_page"))
+
+    if replace:
+        _db_clear_table(table)
+        target_set.clear()
+
+    added = _db_add_emails_to_table(table, emails, source=f.filename)
+    target_set.update(em.strip().lower() for em in emails)
+
+    label = "suppression" if list_type == "suppression" else "blocked"
+    flash(f"{'Replaced' if replace else 'Updated'} {label} list: {added} new emails added ({len(emails)} found in file).")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/suppression/quick-add", methods=["POST"])
+def admin_quick_add_suppression():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    email = request.form.get("email", "").strip().lower()
+    list_type = request.form.get("list_type", "suppression")
+    if not email:
+        flash("Email is required.")
+        return redirect(url_for("admin_page"))
+
+    table = "email_suppressions" if list_type == "suppression" else "email_blocked"
+    target_set = SUPPRESSION_SET if list_type == "suppression" else BLOCKED_SET
+
+    added = _db_add_emails_to_table(table, [email], source="manual")
+    target_set.add(email)
+    label = "suppression" if list_type == "suppression" else "blocked"
+    if added:
+        flash(f"Added '{email}' to {label} list.")
+    else:
+        flash(f"'{email}' is already in the {label} list.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/suppression/remove-from-list", methods=["POST"])
+def admin_remove_from_list():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    email = request.form.get("email", "").strip().lower()
+    list_type = request.form.get("list_type", "suppression")
+    if not email:
+        return redirect(url_for("admin_page"))
+
+    table = "email_suppressions" if list_type == "suppression" else "email_blocked"
+    target_set = SUPPRESSION_SET if list_type == "suppression" else BLOCKED_SET
+
+    _db_remove_email_from_table(table, email)
+    target_set.discard(email)
+    flash(f"Removed '{email}' from {list_type} list.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/suppression/search", methods=["POST"])
+def admin_search_emails():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    search_terms = request.form.get("search_terms", "").strip()
+    if not search_terms:
+        flash("Please enter at least one name or email to search.")
+        return redirect(url_for("admin_page"))
+
+    terms = [t.strip().lower() for t in search_terms.splitlines() if t.strip()]
+    results = []
+
+    for uname, data in EMAIL_MANAGER_DATA.items():
+        for list_idx, lst in enumerate(data.get("lists", [])):
+            row_data = lst.get("row_data", {})
+            for email in lst.get("emails", []):
+                email_lower = email.lower()
+                matched = False
+                # Get name from row_data for this email
+                entry_data = row_data.get(email, {})
+                name_parts = []
+                for col, val in entry_data.items():
+                    col_l = col.lower()
+                    if any(k in col_l for k in ("name", "first", "last", "contact")):
+                        name_parts.append(str(val))
+                name_str = " ".join(name_parts)
+
+                for term in terms:
+                    if term in email_lower or term in name_str.lower():
+                        matched = True
+                        break
+
+                if matched:
+                    results.append({
+                        "email": email,
+                        "name": name_str or None,
+                        "list_name": lst.get("name", "Unknown"),
+                        "list_idx": list_idx,
+                        "user": uname,
+                    })
+
+    # Re-render admin page with search results
+    users_view = {u: type("obj", (), info) for u, info in USERS.items()}
+    supp_sorted = sorted(SUPPRESSION_SET)[:200]
+    blk_sorted = sorted(BLOCKED_SET)[:200]
+    return render_template("admin.html",
+                           users=users_view,
+                           title="Admin",
+                           email_lists=_get_all_email_lists(),
+                           blast_schedules=EMAIL_BLAST_SCHEDULES,
+                           test_email=TEST_EMAIL_ADDRESS,
+                           suppression_count=len(SUPPRESSION_SET),
+                           blocked_count=len(BLOCKED_SET),
+                           suppression_emails=supp_sorted,
+                           blocked_emails=blk_sorted,
+                           search_results=results,
+                           search_terms=search_terms,
+                           active_tab="suppress")
+
+
+@app.route("/admin/suppression/remove-emails", methods=["POST"])
+def admin_remove_emails():
+    if not require_login() or not is_admin():
+        flash("Admin access required.")
+        return redirect(url_for("login"))
+
+    to_remove = request.form.getlist("remove")  # each is "user||list_idx||email"
+    also_block = request.form.get("remove_and_block") == "1"
+
+    removed_count = 0
+    for entry in to_remove:
+        parts = entry.split("||")
+        if len(parts) != 3:
+            continue
+        uname, list_idx_str, email = parts
+        try:
+            list_idx = int(list_idx_str)
+        except ValueError:
+            continue
+
+        if uname in EMAIL_MANAGER_DATA:
+            lists = EMAIL_MANAGER_DATA[uname].get("lists", [])
+            if 0 <= list_idx < len(lists):
+                lst = lists[list_idx]
+                if email in lst.get("emails", []):
+                    lst["emails"].remove(email)
+                    lst.get("row_data", {}).pop(email, None)
+                    removed_count += 1
+
+        if also_block:
+            _db_add_emails_to_table("email_blocked", [email], source="manual-remove")
+            BLOCKED_SET.add(email.strip().lower())
+
+    if removed_count:
+        flash(f"Removed {removed_count} email(s) from user lists." + (" Also added to blocked list." if also_block else ""))
+    else:
+        flash("No emails were removed.")
+    return redirect(url_for("admin_page"))
+
+
 # -------- Email Blast Scheduler routes --------
 def _replace_placeholders(text, recipient_data):
     """Replace [ColumnName] placeholders in text with values from recipient_data dict."""
@@ -6733,6 +7259,10 @@ def _replace_placeholders(text, recipient_data):
 def _send_blast_email(to_email, subject, body_html, from_name=None, sender_email=None, recipient_data=None):
     """Send a single blast email. Returns (success: bool, error: str|None).
     If recipient_data is provided, [ColumnName] placeholders in body_html and subject are replaced."""
+    # Skip suppressed / blocked emails
+    if _is_email_suppressed_or_blocked(to_email):
+        logger.info("Skipping suppressed/blocked email: %s", to_email)
+        return False, "suppressed/blocked"
     # Replace placeholders with per-recipient data
     body_html = _replace_placeholders(body_html, recipient_data)
     subject = _replace_placeholders(subject, recipient_data)
