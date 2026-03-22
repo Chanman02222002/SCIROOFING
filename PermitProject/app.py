@@ -974,6 +974,7 @@ USERS = {
     "roofing123": {"password": "roofing123", "role": "client", "brand": "generic",    "sender_email": ""},
     "munsie":     {"password": "munsie123",  "role": "client", "brand": "munsie",     "sender_email": ""},
     "jobsdirect": {"password": "icecream2",  "role": "client", "brand": "jobsdirect", "sender_email": "choffman@becastaffing.com"},
+    "FloridaMedicalSpace": {"password": "FMS123", "role": "client", "brand": "floridamedicalspace", "sender_email": ""},
 }
 
 def _get_sender_email_for_brand(brand):
@@ -4789,6 +4790,28 @@ app.jinja_loader = DictLoader({
     {% endblock %}
     """,
 
+    # ---------- FLORIDA MEDICAL SPACE LANDING ----------
+    "fms_landing.html": """
+    {% extends "base.html" %}
+    {% block content %}
+      <h2 class="mb-2">Florida Medical Space Dashboard</h2>
+      <p class="text-muted mb-4">Choose a function to continue.</p>
+      <div class="row g-3">
+        <div class="col-md-6 mx-auto">
+          <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+              <h5 class="card-title">Email Dashboard</h5>
+              <p class="card-text text-muted flex-grow-1">
+                Compose and send emails, view scheduled blasts and sent history.
+              </p>
+              <a class="btn btn-primary" href="{{ url_for('email_dashboard') }}">Open Email Dashboard</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endblock %}
+    """,
+
     # ---------- CLIENT EMAIL DASHBOARD (generic) ----------
     "client_email_dashboard.html": """
     {% extends "base.html" %}
@@ -6412,6 +6435,8 @@ def login():
                 return redirect(url_for("sci_landing"))
             if info["brand"] == "adminchan":
                 return redirect(url_for("adminchan_dashboard"))
+            if info["brand"] == "floridamedicalspace":
+                return redirect(url_for("fms_landing"))
             return redirect(url_for("client_landing"))
         flash("Invalid username or password.")
     # Give login page a special body class so only it uses the gradient & bigger logo
@@ -6834,6 +6859,7 @@ BRAND_LABELS = {
     "jobsdirect": "JobsDirect",
     "munsie": "Munsie",
     "generic": "Client",
+    "floridamedicalspace": "Florida Medical Space",
 }
 
 @app.route("/client-landing")
@@ -6845,8 +6871,18 @@ def client_landing():
         return redirect(url_for("adminchan_dashboard"))
     if brand == "sci":
         return redirect(url_for("sci_landing"))
+    if brand == "floridamedicalspace":
+        return redirect(url_for("fms_landing"))
     label = BRAND_LABELS.get(brand, brand.title())
     return render_template("client_landing.html", title=f"{label} Dashboard", brand_label=label)
+
+@app.route("/fms-landing")
+def fms_landing():
+    if not require_login():
+        return redirect(url_for("login"))
+    if current_brand() != "floridamedicalspace":
+        return redirect(url_for("client_landing"))
+    return render_template("fms_landing.html", title="Florida Medical Space Dashboard")
 
 # -------- Generic Email Dashboard (accessible to all client brands) --------
 @app.route("/email-dashboard")
