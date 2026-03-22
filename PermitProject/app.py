@@ -195,6 +195,28 @@ def _db_load_all_email_lists():
     finally:
         conn.close()
 
+def _db_update_email_list_by_name(client_username, list_name, emails, row_data):
+    """Update an existing email list's emails and row_data in PostgreSQL."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE email_lists SET emails = %s, row_data = %s
+                    WHERE client_username = %s AND list_name = %s
+                """, (
+                    json.dumps(emails),
+                    json.dumps(row_data),
+                    client_username,
+                    list_name,
+                ))
+    except Exception:
+        logger.exception("Failed to update email list in DB")
+    finally:
+        conn.close()
+
 # --- DB helper: email blasts ---
 
 def _db_save_blast(blast):
@@ -4824,6 +4846,33 @@ app.jinja_loader = DictLoader({
           font-size: .9rem;
           text-align: center;
         }
+        .search-result-row {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .65rem 1rem;
+          margin-bottom: .4rem;
+          display: flex;
+          align-items: center;
+          gap: .75rem;
+        }
+        .search-result-row:hover { background: #eef2ff; border-color: #a5b4fc; }
+        .search-result-row .sr-email { font-weight: 600; color: #0f172a; }
+        .search-result-row .sr-name { font-size: .85rem; color: #64748b; }
+        .search-result-row .sr-list { font-size: .78rem; color: #4f46e5; background: rgba(79,70,229,.08); padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+        .list-summary-item {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: .65rem 1rem;
+          margin-bottom: .4rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .list-summary-item .ls-name { font-weight: 600; color: #0f172a; }
+        .list-summary-item .ls-count { font-size: .85rem; color: #4f46e5; font-weight: 700; }
+        .list-summary-item .ls-date { font-size: .78rem; color: #94a3b8; }
       </style>
 
       <div class="jd-header">
@@ -4844,6 +4893,75 @@ app.jinja_loader = DictLoader({
           <div class="num">{{ sent_log|selectattr('status', 'equalto', 'FAILED')|list|length }}</div>
           <div class="label">Failed</div>
         </div>
+        <div class="jd-stat">
+          <div class="num">{% set ns = namespace(total=0) %}{% for l in client_lists %}{% set ns.total = ns.total + l.emails|length %}{% endfor %}{{ ns.total }}</div>
+          <div class="label">Total in Lists</div>
+        </div>
+      </div>
+
+      <!-- Your Email Lists -->
+      <div class="jd-card">
+        <h5>Your Email Lists</h5>
+        {% if client_lists %}
+          {% for lst in client_lists %}
+            <div class="list-summary-item">
+              <div>
+                <span class="ls-name">{{ lst.name }}</span>
+                <span class="ls-date ms-2">Uploaded {{ lst.uploaded_at }}</span>
+              </div>
+              <span class="ls-count">{{ lst.emails|length }} emails</span>
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="jd-empty">No email lists uploaded yet. Your admin will upload lists for you.</div>
+        {% endif %}
+      </div>
+
+      <!-- Search & Remove Emails -->
+      <div class="jd-card">
+        <h5>Search &amp; Remove Emails</h5>
+        <p style="font-size:.85rem; color:#64748b; margin-bottom:1rem;">Search your email lists by name or email address. Select results to remove contacts who asked to be removed.</p>
+        <form method="post" action="{{ url_for('email_dashboard_search') }}">
+          <div class="d-flex gap-2 align-items-end">
+            <div class="flex-grow-1">
+              <label class="form-label" style="font-size:.85rem; font-weight:600;">Search (one per line or comma-separated)</label>
+              <textarea name="search_terms" class="form-control" rows="2" placeholder="john@example.com&#10;Jane Smith" style="border-radius:10px;">{{ search_terms }}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" style="border-radius:10px; font-weight:600; height:42px; white-space:nowrap;">
+              Search Lists
+            </button>
+          </div>
+        </form>
+
+        {% if search_results is not none %}
+          <div style="margin-top:1.25rem;">
+            {% if search_results %}
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:.75rem;">
+                <span style="font-weight:700; color:#0f172a;">{{ search_results|length }} result(s) found</span>
+              </div>
+              <form method="post" action="{{ url_for('email_dashboard_remove_emails') }}">
+                <div style="margin-bottom:.75rem; display:flex; gap:.5rem; align-items:center;">
+                  <button type="button" class="btn btn-sm btn-outline-secondary" style="border-radius:8px; font-size:.8rem;" onclick="toggleAllResults(this)">Select All</button>
+                  <button type="submit" class="btn btn-sm btn-danger" style="border-radius:8px; font-size:.8rem; font-weight:600;" onclick="return confirm('Remove selected emails from your lists? This cannot be undone.')">
+                    Remove Selected
+                  </button>
+                </div>
+                {% for r in search_results %}
+                  <div class="search-result-row">
+                    <input type="checkbox" name="remove" value="{{ r.list_idx }}||{{ r.email }}" style="width:18px; height:18px; accent-color:#4f46e5;">
+                    <div style="flex:1; min-width:0;">
+                      <span class="sr-email">{{ r.email }}</span>
+                      {% if r.name %}<span class="sr-name">&mdash; {{ r.name }}</span>{% endif %}
+                    </div>
+                    <span class="sr-list">{{ r.list_name }}</span>
+                  </div>
+                {% endfor %}
+              </form>
+            {% else %}
+              <div class="jd-empty">No matching emails found in your lists.</div>
+            {% endif %}
+          </div>
+        {% endif %}
       </div>
 
       <!-- Compose Email -->
@@ -5091,6 +5209,13 @@ app.jinja_loader = DictLoader({
 
         init();
       })();
+
+      function toggleAllResults(btn){
+        var boxes = document.querySelectorAll('input[name="remove"]');
+        var allChecked = Array.from(boxes).every(function(b){ return b.checked; });
+        boxes.forEach(function(b){ b.checked = !allChecked; });
+        btn.textContent = allChecked ? 'Select All' : 'Deselect All';
+      }
       </script>
     {% endblock %}
     """,
@@ -6760,6 +6885,10 @@ def email_dashboard():
                 "send_result": blast.get("send_result", ""),
             })
 
+    # Get this client's email lists for search/remove functionality
+    client_data = _get_client_email_data(username)
+    client_lists = client_data.get("lists", [])
+
     return render_template("client_email_dashboard.html",
                            title=f"{label} Email Dashboard",
                            dashboard_title=label,
@@ -6767,6 +6896,9 @@ def email_dashboard():
                            username=username,
                            sent_log=sent_log,
                            scheduled_blasts=scheduled_blasts,
+                           client_lists=client_lists,
+                           search_results=None,
+                           search_terms="",
                            body_class="")
 
 @app.route("/email-dashboard/send", methods=["POST"])
@@ -6832,6 +6964,135 @@ def email_dashboard_send():
         flash(f"Failed to send email: {exc}")
 
     return redirect(url_for("email_dashboard"))
+
+@app.route("/email-dashboard/search", methods=["POST"])
+def email_dashboard_search():
+    """Client searches their own email lists by name or email."""
+    if not require_login():
+        return redirect(url_for("login"))
+
+    username = session.get("username", "")
+    brand = current_brand()
+    from_email = _get_sender_email_for_user(username)
+    label = BRAND_LABELS.get(brand, brand.title())
+
+    search_terms = request.form.get("search_terms", "").strip()
+    if not search_terms:
+        flash("Please enter at least one name or email to search.")
+        return redirect(url_for("email_dashboard"))
+
+    terms = [t.strip().lower() for t in search_terms.splitlines() if t.strip()]
+    results = []
+
+    client_data = _get_client_email_data(username)
+    client_lists = client_data.get("lists", [])
+
+    for list_idx, lst in enumerate(client_lists):
+        row_data = lst.get("row_data", {})
+        for email in lst.get("emails", []):
+            email_lower = email.lower()
+            matched = False
+            entry_data = row_data.get(email, {})
+            name_parts = []
+            for col, val in entry_data.items():
+                col_l = col.lower()
+                if any(k in col_l for k in ("name", "first", "last", "contact")):
+                    name_parts.append(str(val))
+            name_str = " ".join(name_parts)
+
+            for term in terms:
+                if term in email_lower or term in name_str.lower():
+                    matched = True
+                    break
+
+            if matched:
+                results.append({
+                    "email": email,
+                    "name": name_str or None,
+                    "list_name": lst.get("name", "Unknown"),
+                    "list_idx": list_idx,
+                })
+
+    # Re-render dashboard with search results
+    if brand == "jobsdirect":
+        sent_log = JOBSDIRECT_SENT_LOG
+    else:
+        sent_log = CLIENT_SENT_LOGS.get(username, [])
+
+    scheduled_blasts = []
+    for blast in EMAIL_BLAST_SCHEDULES:
+        if blast.get("scheduled_for"):
+            if blast.get("sender_email", "").lower() != from_email.lower():
+                continue
+            scheduled_blasts.append({
+                "id": blast.get("id"),
+                "subject": blast.get("subject", "(no subject)"),
+                "body": blast.get("body", ""),
+                "scheduled_for": blast.get("scheduled_for", ""),
+                "status": blast.get("status", "pending"),
+                "recipient_count": blast.get("recipient_count", 0),
+                "recipients": blast.get("recipients", []),
+                "from_name": blast.get("from_name", ""),
+                "sender_email": blast.get("sender_email", ""),
+                "list_name": blast.get("list_name", ""),
+                "sent_at": blast.get("sent_at", ""),
+                "send_result": blast.get("send_result", ""),
+            })
+
+    return render_template("client_email_dashboard.html",
+                           title=f"{label} Email Dashboard",
+                           dashboard_title=label,
+                           from_email=from_email,
+                           username=username,
+                           sent_log=sent_log,
+                           scheduled_blasts=scheduled_blasts,
+                           client_lists=client_lists,
+                           search_results=results,
+                           search_terms=search_terms,
+                           body_class="")
+
+
+@app.route("/email-dashboard/remove-emails", methods=["POST"])
+def email_dashboard_remove_emails():
+    """Client removes emails from their own lists."""
+    if not require_login():
+        return redirect(url_for("login"))
+
+    username = session.get("username", "")
+    to_remove = request.form.getlist("remove")  # each is "list_idx||email"
+
+    removed_count = 0
+    if username in EMAIL_MANAGER_DATA:
+        lists = EMAIL_MANAGER_DATA[username].get("lists", [])
+        for entry in to_remove:
+            parts = entry.split("||")
+            if len(parts) != 2:
+                continue
+            list_idx_str, email = parts
+            try:
+                list_idx = int(list_idx_str)
+            except ValueError:
+                continue
+
+            if 0 <= list_idx < len(lists):
+                lst = lists[list_idx]
+                if email in lst.get("emails", []):
+                    lst["emails"].remove(email)
+                    lst.get("row_data", {}).pop(email, None)
+                    removed_count += 1
+                    # Persist to DB
+                    _db_update_email_list_by_name(
+                        username, lst.get("name", ""),
+                        lst.get("emails", []),
+                        lst.get("row_data", {}),
+                    )
+
+    if removed_count:
+        flash(f"Removed {removed_count} email(s) from your lists.")
+    else:
+        flash("No emails were removed.")
+    return redirect(url_for("email_dashboard"))
+
 
 # -------- Adminchan Email Manager --------
 @app.route("/adminchan")
